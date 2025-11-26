@@ -1,0 +1,22 @@
+{
+  "name": "github-release-dashboard",
+  "version": "1.0.0",
+  "description": "Dashboard to monitor GitHub repository releases and pending changes",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && node index.js",
+    "client": "cd client && npm start",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install"
+  },
+  "keywords": [
+    "github",
+    "dashboard",
+    "releases"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
