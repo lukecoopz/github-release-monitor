@@ -87,10 +87,13 @@
   transition: transform 0.2s, box-shadow 0.2s;
   max-height: 500px;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   position: relative;
   z-index: 1;
+  min-width: 0;
+  word-wrap: break-word;
 }
 
 /* Hide scrollbar by default */
@@ -162,12 +165,17 @@
   color: #1f2937;
   margin: 0;
   line-height: 1.2;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .repo-header h2 a {
   color: #3b82f6;
   text-decoration: none;
   transition: color 0.2s;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .repo-header h2 a:hover {
@@ -302,8 +310,9 @@
   border-bottom: 1px solid #e5e7eb;
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
+  min-width: 0;
 }
 
 .prs-list li:last-child,
@@ -316,8 +325,13 @@
   color: #3b82f6;
   text-decoration: none;
   flex: 1;
+  min-width: 0;
   font-size: 0.9rem;
   transition: color 0.2s;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.4;
 }
 
 .prs-list a:hover,
@@ -331,6 +345,8 @@
   color: #9ca3af;
   font-size: 0.8rem;
   white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 10px;
 }
 
 .no-changes {
