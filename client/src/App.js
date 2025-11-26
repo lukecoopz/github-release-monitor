@@ -65,6 +65,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [apiUsage, setApiUsage] = useState(null);
+  const [filterNewChanges, setFilterNewChanges] = useState(false);
 
   // Cache key based on repos list
   const cacheKey = `github-dashboard-${repos
@@ -251,10 +252,30 @@ function App() {
     return `${Math.floor(diffDays / 365)} years ago`;
   };
 
+  // Filter repos based on filterNewChanges state
+  const filteredRepoData = filterNewChanges
+    ? repoData.filter((data) => data.hasChanges === true)
+    : repoData;
+
   return (
     <div className="App">
       <header className="App-header">
         <div className="header-content">
+          <div className="header-left">
+            <button
+              className={`filter-btn ${filterNewChanges ? "active" : ""}`}
+              onClick={() => setFilterNewChanges(!filterNewChanges)}
+              title={
+                filterNewChanges
+                  ? "Show all repositories"
+                  : "Show only repositories with new changes"
+              }
+            >
+              {filterNewChanges
+                ? "🔍 Showing New Changes"
+                : "🔍 Filter New Changes"}
+            </button>
+          </div>
           <div className="header-text">
             <h1>🚀 GitHub Release Dashboard</h1>
             <p className="subtitle">
@@ -279,8 +300,12 @@ function App() {
           <div className="loading">Loading repository data...</div>
         ) : error ? (
           <div className="error">{error}</div>
+        ) : filteredRepoData.length === 0 && filterNewChanges ? (
+          <div className="no-results">
+            No repositories with new changes found.
+          </div>
         ) : (
-          repoData.map((data, index) => (
+          filteredRepoData.map((data, index) => (
             <RepoCard
               key={`${data.owner}-${data.repo}-${index}`}
               data={data}

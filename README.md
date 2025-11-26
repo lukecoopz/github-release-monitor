@@ -173,12 +173,11 @@ If you see rate limit errors:
 1. Check the API usage widget in the top-right corner to see current usage
 2. The dashboard uses caching to minimize API calls - data persists until you click Refresh
 3. **API Call Breakdown**:
-   - 1 GraphQL call to fetch all releases/tags (batched for all repos)
-   - 53 REST calls for commits (1 per repo)
-   - 53 REST calls for PRs (1 per repo)
-   - **Total: 107 API calls per refresh** (for 53 repositories)
+   - **1 GraphQL call total** - fetches releases, tags, commits, and PRs for all repos in a single batched query
+   - Commits and PRs are filtered client-side based on release dates
+   - **Total: 1 API call per refresh** (for any number of repositories!)
 4. Add a GitHub token to `server/.env` to increase limit from 60 to 5000/hour
-5. With 5000 requests/hour, you can refresh ~46 times per hour (5000 ÷ 107)
+5. With 5000 requests/hour, you can refresh thousands of times per hour
 6. Wait for the rate limit to reset (usually 1 hour)
 
 ### No Releases Found
