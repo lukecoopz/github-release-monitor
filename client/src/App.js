@@ -67,6 +67,11 @@ function App() {
   const [apiUsage, setApiUsage] = useState(null);
   const [filterNewChanges, setFilterNewChanges] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [theme, setTheme] = useState(() => {
+    // Load theme from localStorage or default to 'dark'
+    const savedTheme = localStorage.getItem("github-dashboard-theme");
+    return savedTheme || "dark";
+  });
 
   // Cache key based on repos list
   const cacheKey = `github-dashboard-${repos
@@ -205,6 +210,13 @@ function App() {
     [repos, loadCachedData, saveCachedData, fetchApiUsage]
   );
 
+  // Apply theme on mount and when it changes
+  useEffect(() => {
+    localStorage.setItem("github-dashboard-theme", theme);
+    // Apply theme class to body
+    document.body.className = theme === "dark" ? "theme-dark" : "theme-light";
+  }, [theme]);
+
   useEffect(() => {
     // Load cached data from localStorage on mount (no API calls)
     const cached = loadCachedData();
@@ -223,6 +235,10 @@ function App() {
     const interval = setInterval(fetchApiUsage, 30000);
     return () => clearInterval(interval);
   }, [loadCachedData, fetchRepos, fetchApiUsage]);
+
+  const toggleTheme = () => {
+    setTheme((prevTheme) => (prevTheme === "dark" ? "light" : "dark"));
+  };
 
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
@@ -306,7 +322,7 @@ function App() {
   });
 
   return (
-    <div className="App">
+    <div className={`App theme-${theme}`}>
       <header className="App-header">
         <div className="header-content">
           <div className="header-left">
@@ -341,14 +357,23 @@ function App() {
             </p>
           </div>
           <div className="header-widget">
-            {apiUsage ? (
-              <ApiUsageWidget usage={apiUsage} />
-            ) : (
-              <div className="api-usage-widget">
-                <div className="api-usage-label">API Usage:</div>
-                <div className="api-usage-text">Loading...</div>
-              </div>
-            )}
+            <div className="widget-container">
+              {apiUsage ? (
+                <ApiUsageWidget usage={apiUsage} />
+              ) : (
+                <div className="api-usage-widget">
+                  <div className="api-usage-label">API Usage:</div>
+                  <div className="api-usage-text">Loading...</div>
+                </div>
+              )}
+              <button
+                className="theme-toggle-btn"
+                onClick={toggleTheme}
+                title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              >
+                {theme === "dark" ? "☀️" : "🌙"}
+              </button>
+            </div>
           </div>
         </div>
       </header>
