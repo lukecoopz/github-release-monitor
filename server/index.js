@@ -322,196 +322,261 @@ app.post("/api/repos/batch", async (req, res) => {
   }
 
   try {
-    // Build GraphQL query to get releases, commits, and PRs for all repos in a single query
-    // We fetch recent commits/PRs and filter client-side based on release date
-    const repoQueries = repos
-      .map((repo, index) => {
-        const alias = `repo${index}`;
-        return `
-        ${alias}: repository(owner: "${repo.owner}", name: "${repo.repo}") {
-          name
-          owner {
-            login
-          }
-          latestRelease {
-            tagName
-            publishedAt
-            createdAt
+    // Process repos in smaller batches to avoid GraphQL query timeout
+    // GitHub GraphQL API has limits on query complexity and size
+    const BATCH_SIZE = 10; // Process 10 repos at a time
+    const COMMITS_PER_REPO = 30; // Reduced from 100 to avoid timeout
+    const PRS_PER_REPO = 30; // Reduced from 100 to avoid timeout
+
+    const allResults = [];
+
+    // Process repos in batches
+    for (let i = 0; i < repos.length; i += BATCH_SIZE) {
+      const batch = repos.slice(i, i + BATCH_SIZE);
+      console.log(
+        `📦 Processing batch ${Math.floor(i / BATCH_SIZE) + 1} (${
+          batch.length
+        } repos)...`
+      );
+
+      // Build GraphQL query for this batch
+      const repoQueries = batch
+        .map((repo, index) => {
+          const alias = `repo${index}`;
+          return `
+          ${alias}: repository(owner: "${repo.owner}", name: "${repo.repo}") {
             name
-            url
-          }
-          refs(refPrefix: "refs/tags/", first: 1, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) {
-            nodes {
+            owner {
+              login
+            }
+            latestRelease {
+              tagName
+              publishedAt
+              createdAt
               name
-              target {
-                ... on Tag {
-                  tagger {
-                    date
-                  }
-                }
-                ... on Commit {
-                  committedDate
-                }
-              }
-            }
-          }
-          defaultBranchRef {
-            target {
-              ... on Commit {
-                history(first: 100) {
-                  nodes {
-                    sha
-                    message
-                    committedDate
-                    author {
-                      name
-                    }
-                    url
-                  }
-                }
-              }
-            }
-          }
-          pullRequests(states: MERGED, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
-            nodes {
-              number
-              title
-              mergedAt
-              author {
-                login
-              }
               url
             }
+            refs(refPrefix: "refs/tags/", first: 1, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) {
+              nodes {
+                name
+                target {
+                  ... on Tag {
+                    tagger {
+                      date
+                    }
+                  }
+                  ... on Commit {
+                    committedDate
+                  }
+                }
+              }
+            }
+            defaultBranchRef {
+              target {
+                ... on Commit {
+                  history(first: ${COMMITS_PER_REPO}) {
+                    nodes {
+                      oid
+                      message
+                      committedDate
+                      author {
+                        name
+                      }
+                      url
+                    }
+                  }
+                }
+              }
+            }
+            pullRequests(states: MERGED, first: ${PRS_PER_REPO}, orderBy: {field: UPDATED_AT, direction: DESC}) {
+              nodes {
+                number
+                title
+                mergedAt
+                author {
+                  login
+                }
+                url
+              }
+            }
           }
+        `;
+        })
+        .join("\n");
+
+      const graphqlQuery = `
+        query {
+          ${repoQueries}
         }
       `;
-      })
-      .join("\n");
 
-    const graphqlQuery = `
-      query {
-        ${repoQueries}
-      }
-    `;
+      // Fetch this batch using GraphQL
+      trackGitHubAPICall(GITHUB_GRAPHQL_URL);
+      const graphqlResponse = await axios.post(
+        GITHUB_GRAPHQL_URL,
+        { query: graphqlQuery },
+        { headers: getGraphQLHeaders() }
+      );
 
-    // Fetch everything using GraphQL (single request)
-    trackGitHubAPICall(GITHUB_GRAPHQL_URL);
-    const graphqlResponse = await axios.post(
-      GITHUB_GRAPHQL_URL,
-      { query: graphqlQuery },
-      { headers: getGraphQLHeaders() }
-    );
-
-    if (graphqlResponse.data.errors) {
-      console.error("GraphQL errors:", graphqlResponse.data.errors);
-    }
-
-    // Process GraphQL results
-    const results = repos.map((repo, index) => {
-      const alias = `repo${index}`;
-      const repoData = graphqlResponse.data.data[alias];
-
-      if (!repoData) {
-        return {
-          owner: repo.owner,
-          repo: repo.repo,
-          error: "Repository not found or access denied",
-        };
+      if (graphqlResponse.data.errors) {
+        console.error(
+          `GraphQL errors in batch ${Math.floor(i / BATCH_SIZE) + 1}:`,
+          graphqlResponse.data.errors
+        );
+        // Add error results for this batch
+        batch.forEach((repo) => {
+          allResults.push({
+            owner: repo.owner,
+            repo: repo.repo,
+            error:
+              graphqlResponse.data.errors[0]?.message || "GraphQL query error",
+            statusCode: 500,
+          });
+        });
+        continue; // Skip to next batch
       }
 
-      // Determine latest release or tag
-      let release = null;
-      if (repoData.latestRelease) {
-        release = {
-          tag: repoData.latestRelease.tagName,
-          date:
-            repoData.latestRelease.publishedAt ||
-            repoData.latestRelease.createdAt,
-          name: repoData.latestRelease.name,
-          url: repoData.latestRelease.url,
-        };
-      } else if (repoData.refs?.nodes?.length > 0) {
-        const tag = repoData.refs.nodes[0];
-        const date = tag.target.tagger?.date || tag.target.committedDate;
-        release = {
-          tag: tag.name,
-          date: date,
-          name: tag.name,
-          url: `https://github.com/${repo.owner}/${repo.repo}/releases/tag/${tag.name}`,
-        };
+      // Check if data exists
+      if (!graphqlResponse.data.data) {
+        console.error(
+          `No data in GraphQL response for batch ${
+            Math.floor(i / BATCH_SIZE) + 1
+          }`
+        );
+        batch.forEach((repo) => {
+          allResults.push({
+            owner: repo.owner,
+            repo: repo.repo,
+            error: "No data returned from GraphQL query",
+            statusCode: 500,
+          });
+        });
+        continue; // Skip to next batch
       }
 
-      if (!release) {
+      // Process GraphQL results for this batch
+      const batchResults = batch.map((repo, index) => {
+        const alias = `repo${index}`;
+        const repoData = graphqlResponse.data.data[alias];
+
+        if (!repoData) {
+          return {
+            owner: repo.owner,
+            repo: repo.repo,
+            error: "Repository not found or access denied",
+          };
+        }
+
+        // Determine latest release or tag
+        let release = null;
+        if (repoData.latestRelease) {
+          release = {
+            tag: repoData.latestRelease.tagName,
+            date:
+              repoData.latestRelease.publishedAt ||
+              repoData.latestRelease.createdAt,
+            name: repoData.latestRelease.name,
+            url: repoData.latestRelease.url,
+          };
+        } else if (repoData.refs?.nodes?.length > 0) {
+          const tag = repoData.refs.nodes[0];
+          const date = tag.target.tagger?.date || tag.target.committedDate;
+          release = {
+            tag: tag.name,
+            date: date,
+            name: tag.name,
+            url: `https://github.com/${repo.owner}/${repo.repo}/releases/tag/${tag.name}`,
+          };
+        }
+
+        if (!release) {
+          const result = {
+            owner: repo.owner,
+            repo: repo.repo,
+            release: null,
+            hasChanges: false,
+            commits: [],
+            prs: [],
+            error: "No releases or tags found",
+          };
+          setCachedData(repo.owner, repo.repo, result);
+          return result;
+        }
+
+        // Extract and filter commits by release date
+        const releaseDate = new Date(release.date);
+        const commits = (
+          repoData.defaultBranchRef?.target?.history?.nodes || []
+        )
+          .filter((commit) => new Date(commit.committedDate) > releaseDate)
+          .map((commit) => ({
+            sha: commit.oid ? commit.oid.substring(0, 7) : "unknown",
+            message: commit.message
+              ? commit.message.split("\n")[0]
+              : "No message",
+            author: commit.author?.name || "Unknown",
+            date: commit.committedDate,
+            url:
+              commit.url ||
+              `https://github.com/${repo.owner}/${repo.repo}/commit/${commit.oid}`,
+          }));
+
+        // Filter PRs by merged date
+        const prs = (repoData.pullRequests?.nodes || [])
+          .filter((pr) => {
+            if (!pr.mergedAt) return false;
+            return new Date(pr.mergedAt) > releaseDate;
+          })
+          .map((pr) => ({
+            number: pr.number,
+            title: pr.title,
+            mergedAt: pr.mergedAt,
+            author: pr.author?.login || "Unknown",
+            url: pr.url,
+          }));
+
         const result = {
           owner: repo.owner,
           repo: repo.repo,
-          release: null,
-          hasChanges: false,
-          commits: [],
-          prs: [],
-          error: "No releases or tags found",
+          release: {
+            tag: release.tag,
+            date: release.date,
+            name: release.name,
+            url: release.url,
+          },
+          hasChanges: commits.length > 0 || prs.length > 0,
+          commitsCount: commits.length,
+          prsCount: prs.length,
+          commits: commits.slice(0, 10),
+          prs: prs.slice(0, 10),
         };
+
         setCachedData(repo.owner, repo.repo, result);
         return result;
+      });
+
+      // Add batch results to all results
+      allResults.push(...batchResults);
+
+      // Small delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < repos.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
+    }
 
-      // Extract and filter commits by release date
-      const releaseDate = new Date(release.date);
-      const commits = (repoData.defaultBranchRef?.target?.history?.nodes || [])
-        .filter((commit) => new Date(commit.committedDate) > releaseDate)
-        .map((commit) => ({
-          sha: commit.sha.substring(0, 7),
-          message: commit.message.split("\n")[0],
-          author: commit.author?.name || "Unknown",
-          date: commit.committedDate,
-          url: commit.url,
-        }));
-
-      // Filter PRs by merged date
-      const prs = (repoData.pullRequests?.nodes || [])
-        .filter((pr) => {
-          if (!pr.mergedAt) return false;
-          return new Date(pr.mergedAt) > releaseDate;
-        })
-        .map((pr) => ({
-          number: pr.number,
-          title: pr.title,
-          mergedAt: pr.mergedAt,
-          author: pr.author?.login || "Unknown",
-          url: pr.url,
-        }));
-
-      const result = {
-        owner: repo.owner,
-        repo: repo.repo,
-        release: {
-          tag: release.tag,
-          date: release.date,
-          name: release.name,
-          url: release.url,
-        },
-        hasChanges: commits.length > 0 || prs.length > 0,
-        commitsCount: commits.length,
-        prsCount: prs.length,
-        commits: commits.slice(0, 10),
-        prs: prs.slice(0, 10),
-      };
-
-      setCachedData(repo.owner, repo.repo, result);
-      return result;
-    });
-
-    // Cache individual repo results (not batch cache)
-    results.forEach((result) => {
-      if (result.owner && result.repo) {
+    // Cache individual repo results
+    allResults.forEach((result) => {
+      if (result.owner && result.repo && !result.error) {
         setCachedData(result.owner, result.repo, result);
       }
     });
 
     console.log(
-      `✅ Fetched and cached batch data for ${repos.length} repositories`
+      `✅ Fetched and cached batch data for ${
+        repos.length
+      } repositories (${Math.ceil(repos.length / BATCH_SIZE)} batches)`
     );
-    res.json(results);
+    res.json(allResults);
   } catch (error) {
     const statusCode = error.response?.status;
     const errorMessage =

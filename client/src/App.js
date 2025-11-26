@@ -66,6 +66,7 @@ function App() {
   const [error, setError] = useState(null);
   const [apiUsage, setApiUsage] = useState(null);
   const [filterNewChanges, setFilterNewChanges] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Cache key based on repos list
   const cacheKey = `github-dashboard-${repos
@@ -111,6 +112,25 @@ function App() {
     [cacheKey]
   );
 
+  // Fetch API usage stats
+  const fetchApiUsage = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE}/api/usage`);
+      setApiUsage(response.data);
+    } catch (err) {
+      console.error("Failed to fetch API usage:", err);
+      // Set default/fallback data if API fails
+      setApiUsage({
+        used: 0,
+        limit: 5000,
+        remaining: 5000,
+        percentage: 0,
+        resetInMinutes: 60,
+        resetAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      });
+    }
+  }, []);
+
   const fetchRepos = useCallback(
     async (refresh = false) => {
       // If not refreshing, try to load from localStorage first
@@ -136,6 +156,14 @@ function App() {
         setRepoData(response.data);
         // Save to localStorage
         saveCachedData(response.data);
+
+        // Update API usage stats immediately after refresh
+        // Use setTimeout to ensure it happens after the current execution context
+        if (refresh) {
+          setTimeout(() => {
+            fetchApiUsage();
+          }, 200); // 200ms delay to ensure server has processed the counter increment
+        }
       } catch (err) {
         setError("Failed to fetch repository data");
         console.error(err);
@@ -174,27 +202,8 @@ function App() {
         setLoading(false);
       }
     },
-    [repos, loadCachedData, saveCachedData]
+    [repos, loadCachedData, saveCachedData, fetchApiUsage]
   );
-
-  // Fetch API usage stats
-  const fetchApiUsage = useCallback(async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/api/usage`);
-      setApiUsage(response.data);
-    } catch (err) {
-      console.error("Failed to fetch API usage:", err);
-      // Set default/fallback data if API fails
-      setApiUsage({
-        used: 0,
-        limit: 5000,
-        remaining: 5000,
-        percentage: 0,
-        resetInMinutes: 60,
-        resetAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      });
-    }
-  }, []);
 
   useEffect(() => {
     // Load cached data from localStorage on mount (no API calls)
@@ -252,29 +261,78 @@ function App() {
     return `${Math.floor(diffDays / 365)} years ago`;
   };
 
-  // Filter repos based on filterNewChanges state
-  const filteredRepoData = filterNewChanges
-    ? repoData.filter((data) => data.hasChanges === true)
-    : repoData;
+  // Filter repos based on filterNewChanges and searchQuery
+  const filteredRepoData = repoData.filter((data) => {
+    // Filter by new changes if enabled
+    if (filterNewChanges && !data.hasChanges) {
+      return false;
+    }
+
+    // Filter by search query (repository name or commit messages)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      const repoName = `${data.owner}/${data.repo}`.toLowerCase();
+
+      // Check if repository name matches
+      if (repoName.includes(query)) {
+        return true;
+      }
+
+      // Check if any commit message matches
+      if (data.commits && data.commits.length > 0) {
+        const commitMatches = data.commits.some((commit) =>
+          commit.message.toLowerCase().includes(query)
+        );
+        if (commitMatches) {
+          return true;
+        }
+      }
+
+      // Check if any PR title matches
+      if (data.prs && data.prs.length > 0) {
+        const prMatches = data.prs.some((pr) =>
+          pr.title.toLowerCase().includes(query)
+        );
+        if (prMatches) {
+          return true;
+        }
+      }
+
+      // No match found
+      return false;
+    }
+
+    return true;
+  });
 
   return (
     <div className="App">
       <header className="App-header">
         <div className="header-content">
           <div className="header-left">
-            <button
-              className={`filter-btn ${filterNewChanges ? "active" : ""}`}
-              onClick={() => setFilterNewChanges(!filterNewChanges)}
-              title={
-                filterNewChanges
-                  ? "Show all repositories"
-                  : "Show only repositories with new changes"
-              }
-            >
-              {filterNewChanges
-                ? "🔍 Showing New Changes"
-                : "🔍 Filter New Changes"}
-            </button>
+            <div className="header-controls">
+              <button
+                className={`filter-btn ${filterNewChanges ? "active" : ""}`}
+                onClick={() => setFilterNewChanges(!filterNewChanges)}
+                title={
+                  filterNewChanges
+                    ? "Show all repositories"
+                    : "Show only repositories with new changes"
+                }
+              >
+                {filterNewChanges
+                  ? "🔍 Showing New Changes"
+                  : "🔍 Filter New Changes"}
+              </button>
+              <input
+                type="text"
+                className="search-input"
+                placeholder="Search repos, commits, PRs..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                title="Search repositories by name, commit messages, or PR titles"
+              />
+            </div>
           </div>
           <div className="header-text">
             <h1>🚀 GitHub Release Dashboard</h1>
@@ -300,9 +358,15 @@ function App() {
           <div className="loading">Loading repository data...</div>
         ) : error ? (
           <div className="error">{error}</div>
-        ) : filteredRepoData.length === 0 && filterNewChanges ? (
+        ) : filteredRepoData.length === 0 ? (
           <div className="no-results">
-            No repositories with new changes found.
+            {filterNewChanges && searchQuery.trim()
+              ? "No repositories with new changes match your search."
+              : filterNewChanges
+              ? "No repositories with new changes found."
+              : searchQuery.trim()
+              ? "No repositories match your search."
+              : "No repositories found."}
           </div>
         ) : (
           filteredRepoData.map((data, index) => (
