@@ -256,7 +256,7 @@ body {
 .sort-label {
   font-size: 0.9rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--header-widget-text);
   margin-right: 4px;
 }
 
