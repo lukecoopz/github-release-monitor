@@ -351,7 +351,19 @@ function App() {
             </div>
           </div>
           <div className="header-text">
-            <h1>🚀 GitHub Release Dashboard</h1>
+            <h1>
+              <img
+                src="/robot.png"
+                alt="Verified Robot"
+                style={{
+                  width: "64px",
+                  height: "64px",
+                  verticalAlign: "middle",
+                  marginRight: "8px",
+                }}
+              />
+              GitHub Release Dashboard
+            </h1>
             <p className="subtitle">
               Monitor release versions and pending changes
             </p>
@@ -366,13 +378,25 @@ function App() {
                   <div className="api-usage-text">Loading...</div>
                 </div>
               )}
-              <button
-                className="theme-toggle-btn"
-                onClick={toggleTheme}
-                title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              >
-                {theme === "dark" ? "☀️" : "🌙"}
-              </button>
+              <div className="button-row">
+                <button
+                  className="refresh-btn"
+                  onClick={() => fetchRepos(true)}
+                  disabled={loading}
+                  title="Refresh data from GitHub"
+                >
+                  {loading ? "Refreshing..." : "🔄 Refresh"}
+                </button>
+                <button
+                  className="theme-toggle-btn"
+                  onClick={toggleTheme}
+                  title={`Switch to ${
+                    theme === "dark" ? "light" : "dark"
+                  } mode`}
+                >
+                  {theme === "dark" ? "☀️" : "🌙"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -405,15 +429,6 @@ function App() {
           ))
         )}
       </div>
-
-      <button
-        className="refresh-btn"
-        onClick={() => fetchRepos(true)}
-        disabled={loading}
-        title="Refresh data from GitHub"
-      >
-        {loading ? "Refreshing..." : "🔄 Refresh"}
-      </button>
     </div>
   );
 }
