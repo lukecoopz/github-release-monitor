@@ -67,6 +67,9 @@ function App() {
   const [apiUsage, setApiUsage] = useState(null);
   const [filterNewChanges, setFilterNewChanges] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortCriteria, setSortCriteria] = useState([
+    { field: "alphabetical", order: "asc" },
+  ]); // Array of { field, order } objects
   const [theme, setTheme] = useState(() => {
     // Load theme from localStorage or default to 'dark'
     const savedTheme = localStorage.getItem("github-dashboard-theme");
@@ -321,6 +324,63 @@ function App() {
     return true;
   });
 
+  // Helper function to get sort value for a field
+  const getSortValue = (data, field) => {
+    switch (field) {
+      case "commit-date":
+        // Get latest commit date (find max date from all commits)
+        return data.commits && data.commits.length > 0
+          ? Math.max(...data.commits.map((c) => new Date(c.date).getTime()))
+          : 0;
+      case "merge-date":
+        // Get latest merge date (find max date from all PRs)
+        return data.prs && data.prs.length > 0
+          ? Math.max(...data.prs.map((pr) => new Date(pr.mergedAt).getTime()))
+          : 0;
+      case "release-date":
+        // Use release date
+        return data.release && data.release.date
+          ? new Date(data.release.date).getTime()
+          : 0;
+      case "alphabetical":
+      default:
+        // Sort by repo name
+        return `${data.owner}/${data.repo}`.toLowerCase();
+    }
+  };
+
+  // Sort filtered repos using multiple criteria
+  const sortedRepoData = [...filteredRepoData].sort((a, b) => {
+    // Apply each sort criterion in order
+    for (const criterion of sortCriteria) {
+      const { field, order } = criterion;
+      const aValue = getSortValue(a, field);
+      const bValue = getSortValue(b, field);
+
+      let comparison = 0;
+      if (field === "alphabetical") {
+        // String comparison for alphabetical
+        comparison = aValue.localeCompare(bValue);
+      } else {
+        // Numeric comparison for dates
+        comparison = aValue - bValue;
+      }
+
+      // Apply sort order
+      if (order === "desc") {
+        comparison = -comparison;
+      }
+
+      // If values are different, return the comparison
+      // Otherwise, continue to next criterion
+      if (comparison !== 0) {
+        return comparison;
+      }
+    }
+    // If all criteria are equal, maintain original order
+    return 0;
+  });
+
   return (
     <div className={`App theme-${theme}`}>
       <header className="App-header">
@@ -402,6 +462,89 @@ function App() {
         </div>
       </header>
 
+      {!loading && !error && filteredRepoData.length > 0 && (
+        <div className="sort-controls">
+          <span className="sort-label">Sort by:</span>
+          {["alphabetical", "commit-date", "merge-date", "release-date"].map(
+            (field) => {
+              const fieldLabel = {
+                alphabetical: "Alphabetical",
+                "commit-date": "Commit Date",
+                "merge-date": "Merge Date",
+                "release-date": "Release Date",
+              }[field];
+
+              const sortIndex = sortCriteria.findIndex(
+                (c) => c.field === field
+              );
+              const isActive = sortIndex !== -1;
+              const currentOrder = isActive
+                ? sortCriteria[sortIndex].order
+                : "asc";
+
+              return (
+                <button
+                  key={field}
+                  className={`sort-btn ${isActive ? "active" : ""}`}
+                  onClick={() => {
+                    if (isActive) {
+                      if (currentOrder === "asc") {
+                        // Second click: Toggle to descending
+                        setSortCriteria(
+                          sortCriteria.map((c, idx) =>
+                            idx === sortIndex
+                              ? {
+                                  ...c,
+                                  order: "desc",
+                                }
+                              : c
+                          )
+                        );
+                      } else {
+                        // Third click: Remove from sort criteria
+                        const newCriteria = sortCriteria.filter(
+                          (c, idx) => idx !== sortIndex
+                        );
+                        setSortCriteria(newCriteria);
+                      }
+                    } else {
+                      // First click: Add to sort criteria
+                      setSortCriteria([
+                        ...sortCriteria,
+                        { field, order: "asc" },
+                      ]);
+                    }
+                  }}
+                >
+                  {fieldLabel}
+                  {isActive && (
+                    <>
+                      <span className="sort-chevron">
+                        {currentOrder === "asc" ? "↑" : "↓"}
+                      </span>
+                      {sortCriteria.length > 1 && (
+                        <span className="sort-priority">{sortIndex + 1}</span>
+                      )}
+                    </>
+                  )}
+                </button>
+              );
+            }
+          )}
+          {sortCriteria.length > 1 && (
+            <button
+              className="sort-btn sort-clear"
+              onClick={() =>
+                setSortCriteria([{ field: "alphabetical", order: "asc" }])
+              }
+              title="Clear all sorts"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="dashboard">
         {loading ? (
           <div className="loading">Loading repository data...</div>
@@ -418,7 +561,7 @@ function App() {
               : "No repositories found."}
           </div>
         ) : (
-          filteredRepoData.map((data, index) => (
+          sortedRepoData.map((data, index) => (
             <RepoCard
               key={`${data.owner}-${data.repo}-${index}`}
               data={data}
