@@ -4,6 +4,8 @@ A simple dashboard tool to monitor GitHub repository releases and track pending 
 
 ## Features
 
+- 🔐 **GitHub OAuth Authentication** - Only organization members can access the dashboard
+- 🔑 **Quick Token Login** - Alternative login using server's GitHub token (for development)
 - 📊 View current release version and date for each repository
 - 🔔 Visual indicator when there are changes merged since last release
 - 📝 See recent commits and merged PRs
@@ -19,182 +21,304 @@ A simple dashboard tool to monitor GitHub repository releases and track pending 
 - Node.js (v14 or higher)
 - npm or yarn
 
-### Installation
-
-1. Install all dependencies:
+### Install Dependencies
 
 ```bash
 npm run install-all
 ```
 
-2. (Required for private repos) Set up GitHub token:
-   - Create a `.env` file in the `server/` directory
-   - Add your GitHub personal access token:
-   ```
-   GITHUB_TOKEN=your_token_here
-   ```
-   - Get a token from: https://github.com/settings/tokens
-   - Required for accessing private repositories
-   - Increases rate limit from 60 to 5000 requests/hour
+### Authentication Options
 
-### Running the Application
+The dashboard supports two authentication methods. You can configure one or both:
 
-Start both the backend server and frontend client:
+---
+
+## Option A: Quick Setup (Token-Based Login)
+
+The simplest way to get started. Uses the server's GitHub token to authenticate.
+
+### 1. Create a GitHub Personal Access Token
+
+1. Go to: https://github.com/settings/tokens
+2. Click **"Generate new token (classic)"**
+3. Select scopes:
+   - `repo` (Full control of private repositories)
+   - `read:org` (Read org membership)
+4. Generate and copy the token
+
+### 2. Configure Environment
+
+Create a `.env` file in the `server/` directory:
+
+```bash
+# Required: GitHub token with org repo access
+GITHUB_TOKEN=ghp_your_token_here
+
+# Required: Organization to restrict access to
+ALLOWED_ORG=dronedeploy
+
+# Optional: Restrict token login to specific users (comma-separated)
+# Default: lukecoopz
+ALLOWED_TOKEN_USERS=lukecoopz
+
+# Optional: Override default URLs
+CLIENT_URL=http://localhost:3000
+PORT=3001
+```
+
+> **Security Note**: Token login is restricted to specific GitHub users (default: `lukecoopz`). The token must belong to one of the allowed users.
+
+### 3. Run the Application
 
 ```bash
 npm run dev
 ```
 
-This will start:
+The login page will show a **"🔑 Quick Login (Server Token)"** button.
 
-- Backend API on `http://localhost:3001`
-- Frontend dashboard on `http://localhost:3000`
+> **Note**: This method uses a shared token. All users will make API calls using the same token's rate limit. Best for development/internal use.
+
+---
+
+## Option B: Full Setup (GitHub OAuth)
+
+Recommended for production. Each user authenticates with their own GitHub account.
+
+### 1. Create a GitHub OAuth App
+
+1. Go to your GitHub organization settings: `https://github.com/organizations/YOUR_ORG/settings/applications`
+   - Or for personal: `https://github.com/settings/developers`
+2. Click **"New OAuth App"**
+3. Fill in the details:
+   - **Application name**: `GitHub Release Dashboard`
+   - **Homepage URL**: `http://localhost:3000`
+   - **Authorization callback URL**: `http://localhost:3000/auth/callback`
+4. Click **"Register application"**
+5. Copy the **Client ID**
+6. Click **"Generate a new client secret"** and copy it
+
+### 2. Configure Environment
+
+Create a `.env` file in the `server/` directory:
+
+```bash
+# GitHub OAuth credentials
+GITHUB_CLIENT_ID=your_client_id_here
+GITHUB_CLIENT_SECRET=your_client_secret_here
+
+# Organization to restrict access to
+ALLOWED_ORG=dronedeploy
+
+# Optional: Override default URLs
+CLIENT_URL=http://localhost:3000
+PORT=3001
+```
+
+### 3. Run the Application
+
+```bash
+npm run dev
+```
+
+The login page will show a **"Sign in with GitHub"** button.
+
+---
+
+## Using Both Methods
+
+You can configure both methods. The login page will show both options:
+
+```bash
+# server/.env
+GITHUB_TOKEN=ghp_your_token_here
+GITHUB_CLIENT_ID=your_client_id_here
+GITHUB_CLIENT_SECRET=your_client_secret_here
+ALLOWED_ORG=dronedeploy
+```
+
+This is useful when:
+
+- OAuth is preferred but token login is a fallback
+- Different team members prefer different methods
+- Testing OAuth while developing
+
+## Authentication Flow
+
+### OAuth Flow
+
+1. User clicks "Sign in with GitHub"
+2. Redirected to GitHub to authorize the app
+3. GitHub redirects back with authorization code
+4. Server exchanges code for access token
+5. Server verifies user is a member of the allowed organization
+6. Session created with user's own token
+
+### Token Flow
+
+1. User clicks "Quick Login (Server Token)"
+2. Server verifies the token can access org's private repos
+3. Session created using the token owner's identity
+4. All API calls use the server's token
 
 ## Configuration
 
-### Adding Repositories
+### Changing the Allowed Organization
 
-Edit `client/src/App.js` and update the `repos` array. Repositories are automatically sorted alphabetically:
+Update the `ALLOWED_ORG` variable in `server/.env`:
+
+```bash
+ALLOWED_ORG=your-organization
+```
+
+### Adding/Removing Repositories
+
+Edit `client/src/App.js` and update the `repos` array:
 
 ```javascript
 const [repos] = useState([
-  { owner: "dronedeploy", repo: "rocos-console" },
-  { owner: "dronedeploy", repo: "another-repo" },
+  { owner: "your-org", repo: "repo-name" },
+  { owner: "your-org", repo: "another-repo" },
   // Add more repos here
 ]);
 ```
 
-**Note:** All repositories use `dronedeploy` as the owner by default.
-
 ## How It Works
 
-1. **Release Detection**: Uses GraphQL to batch-fetch latest release tags for all repositories in a single API call. Falls back to latest git tag if no releases exist.
+1. **Authentication**: Verifies users are members of the allowed organization via OAuth or token-based verification.
 
-2. **Change Detection**: After finding the release date, queries for:
+2. **Release Detection**: Uses GraphQL to batch-fetch latest release tags for all repositories in a single API call. Falls back to latest git tag if no releases exist.
+
+3. **Change Detection**: After finding the release date, queries for:
 
    - Commits merged after the release date
    - Pull requests merged after the release date
 
-3. **Caching Strategy**:
+4. **Caching Strategy**:
 
    - **Server-side**: In-memory cache (persists until server restart)
    - **Client-side**: localStorage cache (persists across page refreshes)
    - **No auto-refresh**: Data only updates when you click the Refresh button
-   - Page refreshes load from cache - no API calls made
 
-4. **Visual Indicators**:
-   - Repositories with pending changes show a "New Changes" badge above the repo name
+5. **Visual Indicators**:
+   - Repositories with pending changes show a "New Changes" badge
    - The card has a highlighted border when changes are detected
    - Recent PRs and commits are listed for quick review
-   - API usage widget in top-right shows current rate limit status
+   - API usage widget shows current rate limit status
 
 ## API Endpoints
 
-### POST `/api/repos/batch`
+### Authentication
 
-Batch endpoint that fetches all repositories efficiently using GraphQL. This is the primary endpoint used by the dashboard.
+| Endpoint                    | Method | Description                             |
+| --------------------------- | ------ | --------------------------------------- |
+| `/api/auth/check`           | GET    | Check which auth methods are configured |
+| `/api/auth/github`          | GET    | Get GitHub OAuth URL                    |
+| `/api/auth/github/callback` | POST   | Exchange OAuth code for session         |
+| `/api/auth/token-login`     | POST   | Login using server's GITHUB_TOKEN       |
+| `/api/auth/me`              | GET    | Get current user (requires auth)        |
+| `/api/auth/logout`          | POST   | Logout and destroy session              |
 
-**Request:**
+### Protected Endpoints (require authentication)
 
-```json
-{
-  "repos": [
-    { "owner": "dronedeploy", "repo": "rocos-console" },
-    { "owner": "dronedeploy", "repo": "another-repo" }
-  ],
-  "refresh": false
-}
-```
+| Endpoint                 | Method | Description                 |
+| ------------------------ | ------ | --------------------------- |
+| `/api/repos/batch`       | POST   | Batch fetch repository data |
+| `/api/repo/:owner/:repo` | GET    | Get single repository data  |
+| `/api/repos`             | POST   | Legacy batch endpoint       |
 
-**Response:**
+### Public Endpoints
 
-```json
-[
-  {
-    "owner": "dronedeploy",
-    "repo": "rocos-console",
-    "release": {
-      "tag": "v1.2.3",
-      "date": "2024-01-15T10:30:00Z",
-      "name": "Release v1.2.3",
-      "url": "https://github.com/..."
-    },
-    "hasChanges": true,
-    "commitsCount": 15,
-    "prsCount": 3,
-    "commits": [...],
-    "prs": [...]
-  }
-]
-```
-
-### GET `/api/usage`
-
-Get current GitHub API usage statistics.
-
-**Response:**
-
-```json
-{
-  "used": 35,
-  "limit": 5000,
-  "remaining": 4965,
-  "percentage": 1,
-  "resetInMinutes": 45,
-  "resetAt": "2024-01-15T11:00:00Z"
-}
-```
-
-### GET `/api/repo/:owner/:repo`
-
-Get release information for a single repository (legacy endpoint).
+| Endpoint     | Method | Description              |
+| ------------ | ------ | ------------------------ |
+| `/api/usage` | GET    | Get API usage statistics |
 
 ## Project Structure
 
 ```
 microservice-playground/
-├── server/           # Backend API (Express)
-│   ├── index.js     # Main server file
-│   └── package.json
-├── client/           # Frontend (React)
+├── server/
+│   ├── index.js          # Main server with OAuth & API
+│   ├── package.json
+│   └── .env              # Environment variables (create this)
+├── client/
 │   ├── src/
-│   │   ├── App.js   # Main dashboard component
-│   │   └── App.css  # Styles
+│   │   ├── App.js        # Main dashboard component
+│   │   ├── App.css       # Dashboard styles
+│   │   ├── Login.js      # Login page component
+│   │   ├── Login.css     # Login page styles
+│   │   └── AuthCallback.js # OAuth callback handler
 │   └── package.json
-└── package.json      # Root package.json with scripts
+└── package.json          # Root package.json with scripts
 ```
 
 ## Troubleshooting
 
+### "Access denied" Error
+
+- Ensure you're a member of the organization specified in `ALLOWED_ORG`
+- For token login: Verify the `GITHUB_TOKEN` has access to org private repos
+- For OAuth: Check that your OAuth app has the correct callback URL
+
+### "Token does not have access" Error
+
+- The `GITHUB_TOKEN` needs `repo` and `read:org` scopes
+- The token owner must be a member of the `ALLOWED_ORG`
+- Try generating a new token with the correct permissions
+
+### "User not authorized for token-based login" Error
+
+- Token login is restricted to specific GitHub users
+- Default allowed user is `lukecoopz`
+- To allow other users, set `ALLOWED_TOKEN_USERS` in `server/.env`:
+  ```bash
+  ALLOWED_TOKEN_USERS=lukecoopz,anotheruser,thirduser
+  ```
+- The token must belong to one of the allowed users
+
+### OAuth Callback Error
+
+- Make sure the callback URL in your GitHub OAuth App matches exactly: `http://localhost:3000/auth/callback`
+- Check that `CLIENT_URL` in `.env` matches your frontend URL
+
 ### Rate Limit Issues
 
-If you see rate limit errors:
+1. **OAuth users**: Each user gets their own 5000 requests/hour
+2. **Token users**: Share the server token's 5000 requests/hour
+3. Check the API usage widget in the top-right corner
+4. Use caching - data persists until you click Refresh
 
-1. Check the API usage widget in the top-right corner to see current usage
-2. The dashboard uses caching to minimize API calls - data persists until you click Refresh
-3. **API Call Breakdown**:
-   - **1 GraphQL call total** - fetches releases, tags, commits, and PRs for all repos in a single batched query
-   - Commits and PRs are filtered client-side based on release dates
-   - **Total: 1 API call per refresh** (for any number of repositories!)
-4. Add a GitHub token to `server/.env` to increase limit from 60 to 5000/hour
-5. With 5000 requests/hour, you can refresh thousands of times per hour
-6. Wait for the rate limit to reset (usually 1 hour)
+### Session Expired
 
-### No Releases Found
+- Sessions expire after 24 hours
+- Simply sign in again
 
-If a repository shows "No releases found":
+### No Login Buttons Showing
 
-- The repo might not have any releases or tags
-- Check that the owner/repo name is correct
-- Verify you have access to the repository
-
-### Widget Not Showing
-
-If the API usage widget doesn't appear:
-
-- Restart the server to register the `/api/usage` endpoint
+- Check that at least one auth method is configured in `server/.env`
+- Verify the server is running and accessible
 - Check browser console for errors
-- Verify the server is running on port 3001
+
+## Deployment
+
+For production deployment:
+
+1. **Use OAuth** (recommended for production)
+
+   - Token login shares one rate limit across all users
+   - OAuth gives each user their own rate limit
+
+2. Update the GitHub OAuth App:
+
+   - **Homepage URL**: Your production URL
+   - **Callback URL**: `https://your-domain.com/auth/callback`
+
+3. Update `server/.env`:
+
+   ```bash
+   CLIENT_URL=https://your-domain.com
+   ```
+
+4. Set up HTTPS (required for OAuth in production)
 
 ## License
 

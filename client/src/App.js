@@ -1,10 +1,31 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import "./App.css";
+import Login from "./Login";
+import AuthCallback from "./AuthCallback";
 
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
+// Create axios instance with auth header
+const createAuthAxios = (sessionId) => {
+  const instance = axios.create({
+    baseURL: API_BASE,
+    headers: sessionId ? { Authorization: `Bearer ${sessionId}` } : {},
+  });
+  return instance;
+};
+
 function App() {
+  // Auth state
+  const [user, setUser] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState(null);
+
+  // Check if we're on the auth callback route
+  const isAuthCallback = window.location.pathname === "/auth/callback";
+
+  // Repository list
   const [repos] = useState([
     { owner: "dronedeploy", repo: "agent-scheduling-configurator" },
     { owner: "dronedeploy", repo: "agent-seti" },
@@ -69,12 +90,76 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortCriteria, setSortCriteria] = useState([
     { field: "alphabetical", order: "asc" },
-  ]); // Array of { field, order } objects
+  ]);
   const [theme, setTheme] = useState(() => {
-    // Load theme from localStorage or default to 'dark'
     const savedTheme = localStorage.getItem("github-dashboard-theme");
     return savedTheme || "dark";
   });
+
+  // Check for existing session on mount
+  useEffect(() => {
+    const storedSessionId = localStorage.getItem("sessionId");
+    const storedUser = localStorage.getItem("user");
+
+    if (storedSessionId && storedUser) {
+      // Verify session is still valid
+      axios
+        .get(`${API_BASE}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${storedSessionId}` },
+        })
+        .then((response) => {
+          setUser(response.data.user);
+          setSessionId(storedSessionId);
+          setAuthLoading(false);
+        })
+        .catch(() => {
+          // Session expired, clear storage
+          localStorage.removeItem("sessionId");
+          localStorage.removeItem("user");
+          setAuthLoading(false);
+        });
+    } else {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  // Handle auth success
+  const handleAuthSuccess = (userData, newSessionId) => {
+    setUser(userData);
+    setSessionId(newSessionId);
+    setAuthError(null);
+    setAuthLoading(false);
+  };
+
+  // Handle auth error
+  const handleAuthError = (error) => {
+    setAuthError(error);
+    setAuthLoading(false);
+    // Redirect back to login after showing error
+    setTimeout(() => {
+      window.history.replaceState({}, document.title, "/");
+    }, 3000);
+  };
+
+  // Logout handler
+  const handleLogout = useCallback(async () => {
+    try {
+      await axios.post(
+        `${API_BASE}/api/auth/logout`,
+        {},
+        {
+          headers: { Authorization: `Bearer ${sessionId}` },
+        }
+      );
+    } catch (err) {
+      console.error("Logout error:", err);
+    }
+
+    localStorage.removeItem("sessionId");
+    localStorage.removeItem("user");
+    setUser(null);
+    setSessionId(null);
+  }, [sessionId]);
 
   // Cache key based on repos list
   const cacheKey = `github-dashboard-${repos
@@ -87,9 +172,7 @@ function App() {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const data = JSON.parse(cached);
-        // Check if cache is not too old (optional - you can remove this check if you want cache to persist forever)
         const cacheAge = Date.now() - (data.timestamp || 0);
-        // Cache is valid for 24 hours (optional safety check)
         if (cacheAge < 24 * 60 * 60 * 1000) {
           console.log("📦 Loading cached data from localStorage");
           return data.repoData;
@@ -127,7 +210,6 @@ function App() {
       setApiUsage(response.data);
     } catch (err) {
       console.error("Failed to fetch API usage:", err);
-      // Set default/fallback data if API fails
       setApiUsage({
         used: 0,
         limit: 5000,
@@ -141,7 +223,8 @@ function App() {
 
   const fetchRepos = useCallback(
     async (refresh = false) => {
-      // If not refreshing, try to load from localStorage first
+      if (!sessionId) return;
+
       if (!refresh) {
         const cached = loadCachedData();
         if (cached) {
@@ -155,40 +238,42 @@ function App() {
       setError(null);
 
       try {
-        // Use batch endpoint to fetch all repos in a single request
-        const response = await axios.post(`${API_BASE}/api/repos/batch`, {
+        const authAxios = createAuthAxios(sessionId);
+        const response = await authAxios.post("/api/repos/batch", {
           repos,
           refresh,
         });
 
         setRepoData(response.data);
-        // Save to localStorage
         saveCachedData(response.data);
 
-        // Update API usage stats immediately after refresh
-        // Use setTimeout to ensure it happens after the current execution context
         if (refresh) {
           setTimeout(() => {
             fetchApiUsage();
-          }, 200); // 200ms delay to ensure server has processed the counter increment
+          }, 200);
         }
       } catch (err) {
+        // Check if it's an auth error
+        if (err.response?.status === 401) {
+          handleLogout();
+          return;
+        }
+
         setError("Failed to fetch repository data");
         console.error(err);
 
-        // Try to load from cache even if API fails
         const cached = loadCachedData();
         if (cached) {
           console.log("⚠️ API failed, using cached data");
           setRepoData(cached);
           setError(null);
         } else {
-          // Fallback: try individual requests if batch fails
           try {
+            const authAxios = createAuthAxios(sessionId);
             const fallbackResults = await Promise.all(
               repos.map(({ owner, repo }) =>
-                axios
-                  .get(`${API_BASE}/api/repo/${owner}/${repo}`, {
+                authAxios
+                  .get(`/api/repo/${owner}/${repo}`, {
                     params: refresh ? { refresh: "true" } : {},
                   })
                   .then((response) => response.data)
@@ -210,34 +295,38 @@ function App() {
         setLoading(false);
       }
     },
-    [repos, loadCachedData, saveCachedData, fetchApiUsage]
+    [
+      repos,
+      loadCachedData,
+      saveCachedData,
+      fetchApiUsage,
+      sessionId,
+      handleLogout,
+    ]
   );
 
   // Apply theme on mount and when it changes
   useEffect(() => {
     localStorage.setItem("github-dashboard-theme", theme);
-    // Apply theme class to body
     document.body.className = theme === "dark" ? "theme-dark" : "theme-light";
   }, [theme]);
 
+  // Fetch repos when authenticated
   useEffect(() => {
-    // Load cached data from localStorage on mount (no API calls)
+    if (!sessionId || isAuthCallback) return;
+
     const cached = loadCachedData();
     if (cached) {
       setRepoData(cached);
       setLoading(false);
     } else {
-      // Only fetch if no cache exists
       fetchRepos(false);
     }
 
-    // Fetch API usage stats
     fetchApiUsage();
-
-    // Update API usage every 30 seconds
     const interval = setInterval(fetchApiUsage, 30000);
     return () => clearInterval(interval);
-  }, [loadCachedData, fetchRepos, fetchApiUsage]);
+  }, [sessionId, loadCachedData, fetchRepos, fetchApiUsage, isAuthCallback]);
 
   const toggleTheme = () => {
     setTheme((prevTheme) => (prevTheme === "dark" ? "light" : "dark"));
@@ -282,22 +371,18 @@ function App() {
 
   // Filter repos based on filterNewChanges and searchQuery
   const filteredRepoData = repoData.filter((data) => {
-    // Filter by new changes if enabled
     if (filterNewChanges && !data.hasChanges) {
       return false;
     }
 
-    // Filter by search query (repository name or commit messages)
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
       const repoName = `${data.owner}/${data.repo}`.toLowerCase();
 
-      // Check if repository name matches
       if (repoName.includes(query)) {
         return true;
       }
 
-      // Check if any commit message matches
       if (data.commits && data.commits.length > 0) {
         const commitMatches = data.commits.some((commit) =>
           commit.message.toLowerCase().includes(query)
@@ -307,7 +392,6 @@ function App() {
         }
       }
 
-      // Check if any PR title matches
       if (data.prs && data.prs.length > 0) {
         const prMatches = data.prs.some((pr) =>
           pr.title.toLowerCase().includes(query)
@@ -317,7 +401,6 @@ function App() {
         }
       }
 
-      // No match found
       return false;
     }
 
@@ -328,30 +411,25 @@ function App() {
   const getSortValue = (data, field) => {
     switch (field) {
       case "commit-date":
-        // Get latest commit date (find max date from all commits)
         return data.commits && data.commits.length > 0
           ? Math.max(...data.commits.map((c) => new Date(c.date).getTime()))
           : 0;
       case "merge-date":
-        // Get latest merge date (find max date from all PRs)
         return data.prs && data.prs.length > 0
           ? Math.max(...data.prs.map((pr) => new Date(pr.mergedAt).getTime()))
           : 0;
       case "release-date":
-        // Use release date
         return data.release && data.release.date
           ? new Date(data.release.date).getTime()
           : 0;
       case "alphabetical":
       default:
-        // Sort by repo name
         return `${data.owner}/${data.repo}`.toLowerCase();
     }
   };
 
   // Sort filtered repos using multiple criteria
   const sortedRepoData = [...filteredRepoData].sort((a, b) => {
-    // Apply each sort criterion in order
     for (const criterion of sortCriteria) {
       const { field, order } = criterion;
       const aValue = getSortValue(a, field);
@@ -359,28 +437,73 @@ function App() {
 
       let comparison = 0;
       if (field === "alphabetical") {
-        // String comparison for alphabetical
         comparison = aValue.localeCompare(bValue);
       } else {
-        // Numeric comparison for dates
         comparison = aValue - bValue;
       }
 
-      // Apply sort order
       if (order === "desc") {
         comparison = -comparison;
       }
 
-      // If values are different, return the comparison
-      // Otherwise, continue to next criterion
       if (comparison !== 0) {
         return comparison;
       }
     }
-    // If all criteria are equal, maintain original order
     return 0;
   });
 
+  // Show loading state while checking auth
+  if (authLoading) {
+    return (
+      <div className="auth-loading">
+        <div className="auth-spinner"></div>
+        <p>Loading...</p>
+        <style>{`
+          .auth-loading {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            gap: 20px;
+          }
+          .auth-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #60a5fa;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+          }
+          .auth-loading p {
+            color: rgba(255, 255, 255, 0.8);
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // Show auth callback handler
+  if (isAuthCallback) {
+    return (
+      <AuthCallback
+        onAuthSuccess={handleAuthSuccess}
+        onAuthError={handleAuthError}
+      />
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!user) {
+    return <Login onLogin={handleAuthSuccess} error={authError} />;
+  }
+
+  // Main dashboard
   return (
     <div className={`App theme-${theme}`}>
       <header className="App-header">
@@ -430,6 +553,22 @@ function App() {
           </div>
           <div className="header-widget">
             <div className="widget-container">
+              {/* User profile */}
+              <div className="user-profile">
+                <img
+                  src={user.avatar_url}
+                  alt={user.login}
+                  className="user-avatar"
+                />
+                <span className="user-name">{user.name || user.login}</span>
+                <button
+                  className="logout-btn"
+                  onClick={handleLogout}
+                  title="Sign out"
+                >
+                  Sign out
+                </button>
+              </div>
               {apiUsage ? (
                 <ApiUsageWidget usage={apiUsage} />
               ) : (
@@ -489,7 +628,6 @@ function App() {
                   onClick={() => {
                     if (isActive) {
                       if (currentOrder === "asc") {
-                        // Second click: Toggle to descending
                         setSortCriteria(
                           sortCriteria.map((c, idx) =>
                             idx === sortIndex
@@ -501,14 +639,12 @@ function App() {
                           )
                         );
                       } else {
-                        // Third click: Remove from sort criteria
                         const newCriteria = sortCriteria.filter(
                           (c, idx) => idx !== sortIndex
                         );
                         setSortCriteria(newCriteria);
                       }
                     } else {
-                      // First click: Add to sort criteria
                       setSortCriteria([
                         ...sortCriteria,
                         { field, order: "asc" },

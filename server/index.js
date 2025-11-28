@@ -6,17 +6,364 @@ require("dotenv").config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// GitHub OAuth Configuration
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+const ALLOWED_ORG = process.env.ALLOWED_ORG || "dronedeploy";
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+
+// In-memory session store (use Redis in production)
+const sessions = new Map();
+
+// Session helper functions
+function createSession(userData) {
+  const sessionId = require("crypto").randomBytes(32).toString("hex");
+  sessions.set(sessionId, {
+    user: userData,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+  });
+  return sessionId;
+}
+
+function getSession(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) return null;
+  if (Date.now() > session.expiresAt) {
+    sessions.delete(sessionId);
+    return null;
+  }
+  return session;
+}
+
+function deleteSession(sessionId) {
+  sessions.delete(sessionId);
+}
+
+// CORS configuration - allow credentials
+app.use(
+  cors({
+    origin: CLIENT_URL,
+    credentials: true,
+  })
+);
 app.use(express.json());
+
+// Auth middleware
+function requireAuth(req, res, next) {
+  const sessionId = req.headers.authorization?.replace("Bearer ", "");
+
+  if (!sessionId) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+
+  const session = getSession(sessionId);
+  if (!session) {
+    return res.status(401).json({ error: "Session expired or invalid" });
+  }
+
+  req.user = session.user;
+  next();
+}
 
 // GitHub API base URL
 const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 
-// Cache configuration - no expiration, only cleared on manual refresh
+// ==========================================
+// Authentication Endpoints
+// ==========================================
+
+// Check if dev/token auth is available
+app.get("/api/auth/check", (req, res) => {
+  const hasOAuth = !!(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET);
+  const hasToken = !!process.env.GITHUB_TOKEN;
+
+  res.json({
+    oauthConfigured: hasOAuth,
+    tokenConfigured: hasToken,
+    allowedOrg: ALLOWED_ORG,
+  });
+});
+
+// Get GitHub OAuth URL
+app.get("/api/auth/github", (req, res) => {
+  if (!GITHUB_CLIENT_ID) {
+    return res.status(500).json({
+      error:
+        "GitHub OAuth not configured. Please set GITHUB_CLIENT_ID in server/.env",
+    });
+  }
+
+  const params = new URLSearchParams({
+    client_id: GITHUB_CLIENT_ID,
+    redirect_uri: `${CLIENT_URL}/auth/callback`,
+    scope: "read:org user:email",
+    state: require("crypto").randomBytes(16).toString("hex"),
+  });
+
+  res.json({
+    url: `https://github.com/login/oauth/authorize?${params.toString()}`,
+  });
+});
+
+// Dev/Token-based login - uses server's GITHUB_TOKEN to verify org access
+// Restricted to specific user(s) for security
+const ALLOWED_TOKEN_USERS = (process.env.ALLOWED_TOKEN_USERS || "lukecoopz")
+  .split(",")
+  .map((u) => u.trim().toLowerCase());
+
+app.post("/api/auth/token-login", async (req, res) => {
+  const serverToken = process.env.GITHUB_TOKEN;
+
+  if (!serverToken) {
+    return res.status(500).json({
+      error:
+        "Server GITHUB_TOKEN not configured. Please set GITHUB_TOKEN in server/.env",
+    });
+  }
+
+  try {
+    // First, get the user associated with the token
+    const userResponse = await axios.get(`${GITHUB_API_BASE}/user`, {
+      headers: { Authorization: `Bearer ${serverToken.trim()}` },
+    });
+
+    const user = userResponse.data;
+    console.log(`🔑 Token login attempt for user: ${user.login}`);
+
+    // Check if this user is allowed to use token login
+    if (!ALLOWED_TOKEN_USERS.includes(user.login.toLowerCase())) {
+      console.log(
+        `❌ Token login denied for ${user.login} - not in allowed users list`
+      );
+      return res.status(403).json({
+        error: `Token login is restricted. User "${user.login}" is not authorized for token-based login.`,
+      });
+    }
+
+    // Check if this token can access a private repo in the org
+    // This verifies the token has org access
+    try {
+      const orgReposResponse = await axios.get(
+        `${GITHUB_API_BASE}/orgs/${ALLOWED_ORG}/repos`,
+        {
+          headers: { Authorization: `Bearer ${serverToken.trim()}` },
+          params: { type: "private", per_page: 1 },
+        }
+      );
+
+      // If we can see private repos, the token has org access
+      if (orgReposResponse.status === 200) {
+        console.log(`✅ Token has access to ${ALLOWED_ORG} private repos`);
+      }
+    } catch (orgError) {
+      // Try checking org membership as fallback
+      try {
+        const orgsResponse = await axios.get(`${GITHUB_API_BASE}/user/orgs`, {
+          headers: { Authorization: `Bearer ${serverToken.trim()}` },
+        });
+
+        const isMember = orgsResponse.data.some(
+          (org) => org.login.toLowerCase() === ALLOWED_ORG.toLowerCase()
+        );
+
+        if (!isMember) {
+          return res.status(403).json({
+            error: `Token does not have access to ${ALLOWED_ORG} organization. Please use a token with org access.`,
+          });
+        }
+      } catch (memberError) {
+        return res.status(403).json({
+          error: `Unable to verify organization access. Token may not have sufficient permissions.`,
+        });
+      }
+    }
+
+    // Create session using the server token
+    const userData = {
+      id: user.id,
+      login: user.login,
+      name: user.name || user.login,
+      avatar_url: user.avatar_url,
+      accessToken: serverToken.trim(), // Use server token for API calls
+      isTokenAuth: true, // Mark as token-based auth
+    };
+
+    const sessionId = createSession(userData);
+
+    console.log(`✅ Token login successful for ${user.login}`);
+
+    res.json({
+      sessionId,
+      user: {
+        id: user.id,
+        login: user.login,
+        name: user.name || user.login,
+        avatar_url: user.avatar_url,
+        isTokenAuth: true,
+      },
+    });
+  } catch (error) {
+    console.error("Token login error:", error.response?.data || error.message);
+
+    if (error.response?.status === 401) {
+      return res.status(401).json({
+        error: "Invalid GITHUB_TOKEN. Please check the token is valid.",
+      });
+    }
+
+    res.status(500).json({
+      error: "Token authentication failed. Please check server logs.",
+    });
+  }
+});
+
+// GitHub OAuth callback - exchange code for token
+app.post("/api/auth/github/callback", async (req, res) => {
+  const { code } = req.body;
+
+  if (!code) {
+    return res.status(400).json({ error: "Authorization code required" });
+  }
+
+  if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+    return res.status(500).json({
+      error:
+        "GitHub OAuth not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in server/.env",
+    });
+  }
+
+  try {
+    // Exchange code for access token
+    const tokenResponse = await axios.post(
+      "https://github.com/login/oauth/access_token",
+      {
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code,
+      },
+      {
+        headers: { Accept: "application/json" },
+      }
+    );
+
+    const { access_token, error, error_description } = tokenResponse.data;
+
+    if (error) {
+      console.error("OAuth error:", error, error_description);
+      return res.status(400).json({ error: error_description || error });
+    }
+
+    if (!access_token) {
+      return res.status(400).json({ error: "Failed to get access token" });
+    }
+
+    // Get user info
+    const userResponse = await axios.get(`${GITHUB_API_BASE}/user`, {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+
+    const user = userResponse.data;
+
+    // Check organization membership
+    try {
+      const orgResponse = await axios.get(
+        `${GITHUB_API_BASE}/orgs/${ALLOWED_ORG}/members/${user.login}`,
+        {
+          headers: { Authorization: `Bearer ${access_token}` },
+        }
+      );
+
+      // 204 means user is a member
+      if (orgResponse.status !== 204) {
+        return res.status(403).json({
+          error: `Access denied. You must be a member of the ${ALLOWED_ORG} organization.`,
+        });
+      }
+    } catch (orgError) {
+      if (orgError.response?.status === 404) {
+        return res.status(403).json({
+          error: `Access denied. You must be a member of the ${ALLOWED_ORG} organization.`,
+        });
+      }
+      // If we can't check org membership (e.g., private org), try alternative method
+      try {
+        const orgsResponse = await axios.get(`${GITHUB_API_BASE}/user/orgs`, {
+          headers: { Authorization: `Bearer ${access_token}` },
+        });
+
+        const isMember = orgsResponse.data.some(
+          (org) => org.login.toLowerCase() === ALLOWED_ORG.toLowerCase()
+        );
+
+        if (!isMember) {
+          return res.status(403).json({
+            error: `Access denied. You must be a member of the ${ALLOWED_ORG} organization.`,
+          });
+        }
+      } catch (altError) {
+        console.error("Error checking org membership:", altError.message);
+        return res.status(403).json({
+          error: `Unable to verify organization membership. Please ensure you're a member of ${ALLOWED_ORG}.`,
+        });
+      }
+    }
+
+    // Create session
+    const userData = {
+      id: user.id,
+      login: user.login,
+      name: user.name,
+      avatar_url: user.avatar_url,
+      accessToken: access_token,
+    };
+
+    const sessionId = createSession(userData);
+
+    console.log(`✅ User ${user.login} authenticated successfully`);
+
+    res.json({
+      sessionId,
+      user: {
+        id: user.id,
+        login: user.login,
+        name: user.name,
+        avatar_url: user.avatar_url,
+      },
+    });
+  } catch (error) {
+    console.error("Auth error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Authentication failed" });
+  }
+});
+
+// Check current session
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  res.json({
+    user: {
+      id: req.user.id,
+      login: req.user.login,
+      name: req.user.name,
+      avatar_url: req.user.avatar_url,
+    },
+  });
+});
+
+// Logout
+app.post("/api/auth/logout", (req, res) => {
+  const sessionId = req.headers.authorization?.replace("Bearer ", "");
+  if (sessionId) {
+    deleteSession(sessionId);
+  }
+  res.json({ success: true });
+});
+
+// ==========================================
+// Cache configuration
+// ==========================================
 const cache = new Map();
 
-// Cache helper functions
 function getCacheKey(owner, repo) {
   return `${owner}/${repo}`;
 }
@@ -24,11 +371,9 @@ function getCacheKey(owner, repo) {
 function getCachedData(owner, repo) {
   const key = getCacheKey(owner, repo);
   const cached = cache.get(key);
-
   if (cached) {
     return cached.data;
   }
-
   return null;
 }
 
@@ -40,20 +385,21 @@ function setCachedData(owner, repo, data) {
   });
 }
 
-// Helper function to get GitHub API headers
-const getGitHubHeaders = () => {
+// Helper function to get GitHub API headers (uses user's token if available)
+const getGitHubHeaders = (userToken) => {
   const headers = {
     Accept: "application/vnd.github.v3+json",
   };
 
-  // Add token if available (increases rate limit and allows access to private repos)
-  if (process.env.GITHUB_TOKEN) {
-    const token = process.env.GITHUB_TOKEN.trim();
-    // Support both "token" and "Bearer" formats (newer tokens use Bearer)
-    if (token.startsWith("ghp_") || token.startsWith("github_pat_")) {
-      headers["Authorization"] = `Bearer ${token}`;
+  // Use user's token if available, otherwise fall back to server token
+  const token = userToken || process.env.GITHUB_TOKEN;
+
+  if (token) {
+    const cleanToken = token.trim();
+    if (cleanToken.startsWith("ghp_") || cleanToken.startsWith("github_pat_")) {
+      headers["Authorization"] = `Bearer ${cleanToken}`;
     } else {
-      headers["Authorization"] = `token ${token}`;
+      headers["Authorization"] = `token ${cleanToken}`;
     }
   }
 
@@ -61,28 +407,32 @@ const getGitHubHeaders = () => {
 };
 
 // Helper function to get GitHub GraphQL headers
-const getGraphQLHeaders = () => {
+const getGraphQLHeaders = (userToken) => {
   const headers = {
     "Content-Type": "application/json",
   };
 
-  if (process.env.GITHUB_TOKEN) {
-    const token = process.env.GITHUB_TOKEN.trim();
-    headers["Authorization"] = `Bearer ${token}`;
+  const token = userToken || process.env.GITHUB_TOKEN;
+  if (token) {
+    headers["Authorization"] = `Bearer ${token.trim()}`;
   }
 
   return headers;
 };
 
+// ==========================================
+// Protected API Endpoints
+// ==========================================
+
 // Fetch latest release tag and date
-async function getLatestRelease(owner, repo) {
+async function getLatestRelease(owner, repo, userToken) {
   try {
     trackGitHubAPICall(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/releases/latest`
     );
     const response = await axios.get(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/releases/latest`,
-      { headers: getGitHubHeaders() }
+      { headers: getGitHubHeaders(userToken) }
     );
 
     return {
@@ -93,44 +443,41 @@ async function getLatestRelease(owner, repo) {
     };
   } catch (error) {
     if (error.response?.status === 404) {
-      // No releases found, try to get latest tag instead
-      return getLatestTag(owner, repo);
+      return getLatestTag(owner, repo, userToken);
     }
     throw error;
   }
 }
 
 // Fallback: Get latest tag if no releases exist
-async function getLatestTag(owner, repo) {
+async function getLatestTag(owner, repo, userToken) {
   try {
     trackGitHubAPICall(`${GITHUB_API_BASE}/repos/${owner}/${repo}/tags`);
     const response = await axios.get(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/tags`,
-      { headers: getGitHubHeaders() }
+      { headers: getGitHubHeaders(userToken) }
     );
 
     if (response.data.length === 0) {
       return null;
     }
 
-    // Get the tag details to find the commit date
     const latestTag = response.data[0];
     trackGitHubAPICall(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/refs/tags/${latestTag.name}`
     );
     const tagResponse = await axios.get(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/refs/tags/${latestTag.name}`,
-      { headers: getGitHubHeaders() }
+      { headers: getGitHubHeaders(userToken) }
     );
 
-    // Get commit details for the tag
     const commitSha = tagResponse.data.object.sha;
     trackGitHubAPICall(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/commits/${commitSha}`
     );
     const commitResponse = await axios.get(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/commits/${commitSha}`,
-      { headers: getGitHubHeaders() }
+      { headers: getGitHubHeaders(userToken) }
     );
 
     return {
@@ -145,13 +492,13 @@ async function getLatestTag(owner, repo) {
 }
 
 // Get commits merged after a specific tag/date
-async function getCommitsSinceRelease(owner, repo, sinceDate) {
+async function getCommitsSinceRelease(owner, repo, sinceDate, userToken) {
   try {
     trackGitHubAPICall(`${GITHUB_API_BASE}/repos/${owner}/${repo}/commits`);
     const response = await axios.get(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/commits`,
       {
-        headers: getGitHubHeaders(),
+        headers: getGitHubHeaders(userToken),
         params: {
           since: sinceDate,
           per_page: 100,
@@ -161,7 +508,7 @@ async function getCommitsSinceRelease(owner, repo, sinceDate) {
 
     return response.data.map((commit) => ({
       sha: commit.sha.substring(0, 7),
-      message: commit.commit.message.split("\n")[0], // First line only
+      message: commit.commit.message.split("\n")[0],
       author: commit.commit.author.name,
       date: commit.commit.author.date,
       url: commit.html_url,
@@ -172,11 +519,11 @@ async function getCommitsSinceRelease(owner, repo, sinceDate) {
 }
 
 // Get merged PRs since a specific date
-async function getMergedPRsSinceRelease(owner, repo, sinceDate) {
+async function getMergedPRsSinceRelease(owner, repo, sinceDate, userToken) {
   try {
     trackGitHubAPICall(`${GITHUB_API_BASE}/search/issues`);
     const response = await axios.get(`${GITHUB_API_BASE}/search/issues`, {
-      headers: getGitHubHeaders(),
+      headers: getGitHubHeaders(userToken),
       params: {
         q: `repo:${owner}/${repo} is:pr is:merged merged:>${
           sinceDate.split("T")[0]
@@ -199,12 +546,12 @@ async function getMergedPRsSinceRelease(owner, repo, sinceDate) {
   }
 }
 
-// Main endpoint to get repository release info
-app.get("/api/repo/:owner/:repo", async (req, res) => {
+// Main endpoint to get repository release info (protected)
+app.get("/api/repo/:owner/:repo", requireAuth, async (req, res) => {
   const { owner, repo } = req.params;
   const { refresh } = req.query;
+  const userToken = req.user.accessToken;
 
-  // Check cache first (unless refresh is requested)
   if (!refresh) {
     const cached = getCachedData(owner, repo);
     if (cached) {
@@ -214,8 +561,7 @@ app.get("/api/repo/:owner/:repo", async (req, res) => {
   }
 
   try {
-    // Get latest release
-    const release = await getLatestRelease(owner, repo);
+    const release = await getLatestRelease(owner, repo, userToken);
 
     if (!release) {
       const result = {
@@ -231,10 +577,9 @@ app.get("/api/repo/:owner/:repo", async (req, res) => {
       return res.json(result);
     }
 
-    // Get commits and PRs since release
     const [commits, prs] = await Promise.all([
-      getCommitsSinceRelease(owner, repo, release.date),
-      getMergedPRsSinceRelease(owner, repo, release.date),
+      getCommitsSinceRelease(owner, repo, release.date, userToken),
+      getMergedPRsSinceRelease(owner, repo, release.date, userToken),
     ]);
 
     const result = {
@@ -249,11 +594,10 @@ app.get("/api/repo/:owner/:repo", async (req, res) => {
       hasChanges: commits.length > 0 || prs.length > 0,
       commitsCount: commits.length,
       prsCount: prs.length,
-      commits: commits.slice(0, 10), // Limit to 10 most recent
-      prs: prs.slice(0, 10), // Limit to 10 most recent
+      commits: commits.slice(0, 10),
+      prs: prs.slice(0, 10),
     };
 
-    // Cache the result
     setCachedData(owner, repo, result);
     console.log(`✅ Fetched and cached data for ${owner}/${repo}`);
 
@@ -264,7 +608,6 @@ app.get("/api/repo/:owner/:repo", async (req, res) => {
 
     console.error(`Error fetching data for ${owner}/${repo}:`, errorMessage);
 
-    // Provide more helpful error messages
     let userMessage = "Failed to fetch repository data";
     if (statusCode === 403) {
       userMessage =
@@ -278,7 +621,6 @@ app.get("/api/repo/:owner/:repo", async (req, res) => {
     } else if (statusCode === 403 && errorMessage.includes("rate limit")) {
       userMessage =
         "GitHub API rate limit exceeded. Data will be served from cache if available.";
-      // Try to serve cached data when rate limited
       const cached = getCachedData(owner, repo);
       if (cached) {
         console.log(
@@ -298,17 +640,16 @@ app.get("/api/repo/:owner/:repo", async (req, res) => {
   }
 });
 
-// Batch endpoint using GraphQL to fetch all repos efficiently
-app.post("/api/repos/batch", async (req, res) => {
-  const { repos, refresh } = req.body; // Array of {owner, repo} objects
+// Batch endpoint using GraphQL (protected)
+app.post("/api/repos/batch", requireAuth, async (req, res) => {
+  const { repos, refresh } = req.body;
+  const userToken = req.user.accessToken;
 
   if (!Array.isArray(repos)) {
     return res.status(400).json({ error: "repos must be an array" });
   }
 
-  // Check cache for all repos first (unless refresh is requested)
   if (!refresh) {
-    // Check if we have cached data for all repos
     const allCached = repos.every(({ owner, repo }) =>
       getCachedData(owner, repo)
     );
@@ -322,15 +663,12 @@ app.post("/api/repos/batch", async (req, res) => {
   }
 
   try {
-    // Process repos in smaller batches to avoid GraphQL query timeout
-    // GitHub GraphQL API has limits on query complexity and size
-    const BATCH_SIZE = 10; // Process 10 repos at a time
-    const COMMITS_PER_REPO = 30; // Reduced from 100 to avoid timeout
-    const PRS_PER_REPO = 30; // Reduced from 100 to avoid timeout
+    const BATCH_SIZE = 10;
+    const COMMITS_PER_REPO = 30;
+    const PRS_PER_REPO = 30;
 
     const allResults = [];
 
-    // Process repos in batches
     for (let i = 0; i < repos.length; i += BATCH_SIZE) {
       const batch = repos.slice(i, i + BATCH_SIZE);
       console.log(
@@ -339,7 +677,6 @@ app.post("/api/repos/batch", async (req, res) => {
         } repos)...`
       );
 
-      // Build GraphQL query for this batch
       const repoQueries = batch
         .map((repo, index) => {
           const alias = `repo${index}`;
@@ -410,12 +747,11 @@ app.post("/api/repos/batch", async (req, res) => {
         }
       `;
 
-      // Fetch this batch using GraphQL
       trackGitHubAPICall(GITHUB_GRAPHQL_URL);
       const graphqlResponse = await axios.post(
         GITHUB_GRAPHQL_URL,
         { query: graphqlQuery },
-        { headers: getGraphQLHeaders() }
+        { headers: getGraphQLHeaders(userToken) }
       );
 
       if (graphqlResponse.data.errors) {
@@ -423,7 +759,6 @@ app.post("/api/repos/batch", async (req, res) => {
           `GraphQL errors in batch ${Math.floor(i / BATCH_SIZE) + 1}:`,
           graphqlResponse.data.errors
         );
-        // Add error results for this batch
         batch.forEach((repo) => {
           allResults.push({
             owner: repo.owner,
@@ -433,10 +768,9 @@ app.post("/api/repos/batch", async (req, res) => {
             statusCode: 500,
           });
         });
-        continue; // Skip to next batch
+        continue;
       }
 
-      // Check if data exists
       if (!graphqlResponse.data.data) {
         console.error(
           `No data in GraphQL response for batch ${
@@ -451,10 +785,9 @@ app.post("/api/repos/batch", async (req, res) => {
             statusCode: 500,
           });
         });
-        continue; // Skip to next batch
+        continue;
       }
 
-      // Process GraphQL results for this batch
       const batchResults = batch.map((repo, index) => {
         const alias = `repo${index}`;
         const repoData = graphqlResponse.data.data[alias];
@@ -467,7 +800,6 @@ app.post("/api/repos/batch", async (req, res) => {
           };
         }
 
-        // Determine latest release or tag
         let release = null;
         if (repoData.latestRelease) {
           release = {
@@ -503,7 +835,6 @@ app.post("/api/repos/batch", async (req, res) => {
           return result;
         }
 
-        // Extract and filter commits by release date
         const releaseDate = new Date(release.date);
         const commits = (
           repoData.defaultBranchRef?.target?.history?.nodes || []
@@ -521,7 +852,6 @@ app.post("/api/repos/batch", async (req, res) => {
               `https://github.com/${repo.owner}/${repo.repo}/commit/${commit.oid}`,
           }));
 
-        // Filter PRs by merged date
         const prs = (repoData.pullRequests?.nodes || [])
           .filter((pr) => {
             if (!pr.mergedAt) return false;
@@ -555,16 +885,13 @@ app.post("/api/repos/batch", async (req, res) => {
         return result;
       });
 
-      // Add batch results to all results
       allResults.push(...batchResults);
 
-      // Small delay between batches to avoid rate limiting
       if (i + BATCH_SIZE < repos.length) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
-    // Cache individual repo results
     allResults.forEach((result) => {
       if (result.owner && result.repo && !result.error) {
         setCachedData(result.owner, result.repo, result);
@@ -586,7 +913,6 @@ app.post("/api/repos/batch", async (req, res) => {
 
     console.error("Error in batch fetch:", errorMessage);
 
-    // Try to serve individual cached data if batch fails
     const fallbackResults = repos.map(({ owner, repo }) => {
       const cached = getCachedData(owner, repo);
       if (cached) {
@@ -606,9 +932,9 @@ app.post("/api/repos/batch", async (req, res) => {
   }
 });
 
-// Endpoint to get multiple repositories (legacy - uses individual calls)
-app.post("/api/repos", async (req, res) => {
-  const { repos } = req.body; // Array of {owner, repo} objects
+// Legacy endpoint (protected)
+app.post("/api/repos", requireAuth, async (req, res) => {
+  const { repos } = req.body;
 
   if (!Array.isArray(repos)) {
     return res.status(400).json({ error: "repos must be an array" });
@@ -618,7 +944,9 @@ app.post("/api/repos", async (req, res) => {
     const results = await Promise.all(
       repos.map(({ owner, repo }) =>
         axios
-          .get(`http://localhost:${PORT}/api/repo/${owner}/${repo}`)
+          .get(`http://localhost:${PORT}/api/repo/${owner}/${repo}`, {
+            headers: { Authorization: req.headers.authorization },
+          })
           .then((response) => response.data)
           .catch((error) => ({
             owner,
@@ -636,14 +964,13 @@ app.post("/api/repos", async (req, res) => {
 
 // Rate limit tracking
 let apiCallCount = 0;
-let rateLimitResetTime = Date.now() + 60 * 60 * 1000; // 1 hour from now
+let rateLimitResetTime = Date.now() + 60 * 60 * 1000;
 
 function trackGitHubAPICall(url) {
   if (url && (url.includes("api.github.com") || url.includes("github.com"))) {
     apiCallCount++;
     const now = Date.now();
     if (now > rateLimitResetTime) {
-      // Reset counter if an hour has passed
       apiCallCount = 1;
       rateLimitResetTime = now + 60 * 60 * 1000;
       console.log(`🔄 Rate limit counter reset`);
@@ -666,7 +993,7 @@ function trackGitHubAPICall(url) {
   return 0;
 }
 
-// Endpoint to get API usage stats
+// API usage stats (public - needed for login page)
 app.get("/api/usage", (req, res) => {
   const now = Date.now();
   const remaining = Math.max(0, 5000 - apiCallCount);
@@ -686,5 +1013,12 @@ app.get("/api/usage", (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📊 Dashboard API ready`);
+  console.log(`🔐 Authentication: GitHub OAuth (org: ${ALLOWED_ORG})`);
   console.log(`📈 API rate limit tracking enabled (5000 requests/hour)`);
+
+  if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+    console.warn(
+      `⚠️  GitHub OAuth not configured! Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in server/.env`
+    );
+  }
 });
