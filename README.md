@@ -33,50 +33,57 @@ The dashboard supports two authentication methods. You can configure one or both
 
 ---
 
-## Option A: Quick Setup (Token-Based Login)
+## Option A: User Token Login (Recommended - No OAuth Setup Required)
 
-The simplest way to get started. Uses the server's GitHub token to authenticate.
+Each user logs in with their own GitHub Personal Access Token. No OAuth app needed!
 
-### 1. Create a GitHub Personal Access Token
-
-1. Go to: https://github.com/settings/tokens
-2. Click **"Generate new token (classic)"**
-3. Select scopes:
-   - `repo` (Full control of private repositories)
-   - `read:org` (Read org membership)
-4. Generate and copy the token
-
-### 2. Configure Environment
+### 1. Configure Environment
 
 Create a `.env` file in the `server/` directory:
 
 ```bash
-# Required: GitHub token with org repo access
-GITHUB_TOKEN=ghp_your_token_here
-
 # Required: Organization to restrict access to
 ALLOWED_ORG=dronedeploy
-
-# Optional: Restrict token login to specific users (comma-separated)
-# Default: lukecoopz
-ALLOWED_TOKEN_USERS=lukecoopz
 
 # Optional: Override default URLs
 CLIENT_URL=http://localhost:3000
 PORT=3001
 ```
 
-> **Security Note**: Token login is restricted to specific GitHub users (default: `lukecoopz`). The token must belong to one of the allowed users.
-
-### 3. Run the Application
+### 2. Run the Application
 
 ```bash
 npm run dev
 ```
 
-The login page will show a **"🔑 Quick Login (Server Token)"** button.
+### 3. User Login Flow
 
-> **Note**: This method uses a shared token. All users will make API calls using the same token's rate limit. Best for development/internal use.
+1. User clicks **"🔑 Login with Personal Access Token"**
+2. User creates a token at [github.com/settings/tokens](https://github.com/settings/tokens/new?scopes=repo,read:org&description=Release%20Dashboard)
+3. User pastes their token
+4. Server verifies they're a member of the allowed org
+5. Done! Each user gets their own 5000 req/hr rate limit
+
+### Benefits
+
+- ✅ **No OAuth app setup required**
+- ✅ **Each user gets their own rate limit** (5000/hr)
+- ✅ **Individual permissions** - each user's token has their own access
+- ✅ **Tokens stored in session only** - never persisted to disk
+
+---
+
+## Option A2: Admin Quick Login (Optional)
+
+For admins/developers, you can also set up a server token for quick login:
+
+```bash
+# server/.env
+GITHUB_TOKEN=ghp_your_admin_token_here
+ALLOWED_TOKEN_USERS=lukecoopz  # Restrict to specific users
+```
+
+This shows an **"⚡ Quick Login (Admin)"** button for authorized users only.
 
 ---
 
@@ -209,14 +216,15 @@ const [repos] = useState([
 
 ### Authentication
 
-| Endpoint                    | Method | Description                             |
-| --------------------------- | ------ | --------------------------------------- |
-| `/api/auth/check`           | GET    | Check which auth methods are configured |
-| `/api/auth/github`          | GET    | Get GitHub OAuth URL                    |
-| `/api/auth/github/callback` | POST   | Exchange OAuth code for session         |
-| `/api/auth/token-login`     | POST   | Login using server's GITHUB_TOKEN       |
-| `/api/auth/me`              | GET    | Get current user (requires auth)        |
-| `/api/auth/logout`          | POST   | Logout and destroy session              |
+| Endpoint                     | Method | Description                             |
+| ---------------------------- | ------ | --------------------------------------- |
+| `/api/auth/check`            | GET    | Check which auth methods are configured |
+| `/api/auth/github`           | GET    | Get GitHub OAuth URL                    |
+| `/api/auth/github/callback`  | POST   | Exchange OAuth code for session         |
+| `/api/auth/user-token-login` | POST   | Login with user's own GitHub PAT        |
+| `/api/auth/token-login`      | POST   | Admin login using server's GITHUB_TOKEN |
+| `/api/auth/me`               | GET    | Get current user (requires auth)        |
+| `/api/auth/logout`           | POST   | Logout and destroy session              |
 
 ### Protected Endpoints (require authentication)
 

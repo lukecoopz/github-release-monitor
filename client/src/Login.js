@@ -7,6 +7,8 @@ function Login({ onLogin, error: externalError }) {
   const [authConfig, setAuthConfig] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(externalError);
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [userToken, setUserToken] = useState("");
 
   // Check what auth methods are available
   useEffect(() => {
@@ -48,7 +50,8 @@ function Login({ onLogin, error: externalError }) {
     }
   };
 
-  const handleTokenLogin = async () => {
+  // Quick login using server's GITHUB_TOKEN (admin only)
+  const handleServerTokenLogin = async () => {
     setLoading(true);
     setError(null);
     try {
@@ -62,14 +65,43 @@ function Login({ onLogin, error: externalError }) {
         throw new Error(data.error || "Token login failed");
       }
 
-      // Store session
       localStorage.setItem("sessionId", data.sessionId);
       localStorage.setItem("user", JSON.stringify(data.user));
-
-      // Call onLogin callback
       onLogin(data.user, data.sessionId);
     } catch (err) {
       console.error("Token login failed:", err);
+      setError(err.message || "Token login failed");
+      setLoading(false);
+    }
+  };
+
+  // Login using user's own GitHub token
+  const handleUserTokenLogin = async () => {
+    if (!userToken.trim()) {
+      setError("Please enter your GitHub Personal Access Token");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/user-token-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: userToken.trim() }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Token login failed");
+      }
+
+      localStorage.setItem("sessionId", data.sessionId);
+      localStorage.setItem("user", JSON.stringify(data.user));
+      setUserToken(""); // Clear token from state
+      onLogin(data.user, data.sessionId);
+    } catch (err) {
+      console.error("User token login failed:", err);
       setError(err.message || "Token login failed");
       setLoading(false);
     }
@@ -132,29 +164,95 @@ function Login({ onLogin, error: externalError }) {
             </button>
           )}
 
-          {/* Divider when both options available */}
-          {showOAuthButton && showTokenButton && (
+          {/* Divider */}
+          {showOAuthButton && (
             <div className="login-divider">
               <span>or</span>
             </div>
           )}
 
-          {/* Token Login Button */}
-          {showTokenButton && (
+          {/* User Token Login Section */}
+          {!showTokenInput ? (
             <button
               className="token-login-btn"
-              onClick={handleTokenLogin}
+              onClick={() => setShowTokenInput(true)}
               disabled={loading}
             >
-              {loading ? (
-                <span className="loading-spinner">Authenticating...</span>
-              ) : (
-                <>
-                  <span className="token-icon">🔑</span>
-                  Quick Login (Server Token)
-                </>
-              )}
+              <span className="token-icon">🔑</span>
+              Login with Personal Access Token
             </button>
+          ) : (
+            <div className="token-input-section">
+              <div className="token-input-header">
+                <span>🔑 Personal Access Token</span>
+                <button
+                  className="token-cancel-btn"
+                  onClick={() => {
+                    setShowTokenInput(false);
+                    setUserToken("");
+                    setError(null);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+              <input
+                type="password"
+                className="token-input"
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                value={userToken}
+                onChange={(e) => setUserToken(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleUserTokenLogin()}
+                disabled={loading}
+                autoFocus
+              />
+              <button
+                className="github-login-btn"
+                onClick={handleUserTokenLogin}
+                disabled={loading || !userToken.trim()}
+              >
+                {loading ? (
+                  <span className="loading-spinner">Verifying...</span>
+                ) : (
+                  "Verify & Login"
+                )}
+              </button>
+              <p className="token-help">
+                Create a token at{" "}
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=Release%20Dashboard"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  github.com/settings/tokens
+                </a>
+                <br />
+                Required scopes: <code>repo</code>, <code>read:org</code>
+              </p>
+            </div>
+          )}
+
+          {/* Admin Quick Login (only shown if server token configured) */}
+          {showTokenButton && !showTokenInput && (
+            <>
+              <div className="login-divider">
+                <span>admin</span>
+              </div>
+              <button
+                className="admin-login-btn"
+                onClick={handleServerTokenLogin}
+                disabled={loading}
+              >
+                {loading ? (
+                  <span className="loading-spinner">Authenticating...</span>
+                ) : (
+                  <>
+                    <span className="token-icon">⚡</span>
+                    Quick Login (Admin)
+                  </>
+                )}
+              </button>
+            </>
           )}
 
           {/* Show message if neither is configured */}
@@ -169,17 +267,11 @@ function Login({ onLogin, error: externalError }) {
           )}
 
           <div className="login-footer">
-            {showTokenButton && !showOAuthButton ? (
-              <p>
-                Using server token for authentication. For production, configure
-                GitHub OAuth.
-              </p>
-            ) : (
-              <p>
-                By signing in, you authorize the dashboard to verify your
-                organization membership.
-              </p>
-            )}
+            <p>
+              Your token is used to verify org membership and make API calls.
+              <br />
+              Tokens are stored in your session only, never on disk.
+            </p>
           </div>
         </div>
       </div>

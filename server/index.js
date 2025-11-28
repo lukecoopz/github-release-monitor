@@ -219,6 +219,122 @@ app.post("/api/auth/token-login", async (req, res) => {
   }
 });
 
+// User-provided token login - user enters their own GitHub PAT
+app.post("/api/auth/user-token-login", async (req, res) => {
+  const { token } = req.body;
+
+  if (!token) {
+    return res.status(400).json({
+      error: "GitHub Personal Access Token is required",
+    });
+  }
+
+  const userToken = token.trim();
+
+  try {
+    // Get user info from the provided token
+    const userResponse = await axios.get(`${GITHUB_API_BASE}/user`, {
+      headers: { Authorization: `Bearer ${userToken}` },
+    });
+
+    const user = userResponse.data;
+    console.log(`🔑 User token login attempt for: ${user.login}`);
+
+    // Verify organization membership
+    let isMember = false;
+
+    // Try to check org membership directly
+    try {
+      const orgResponse = await axios.get(
+        `${GITHUB_API_BASE}/orgs/${ALLOWED_ORG}/members/${user.login}`,
+        { headers: { Authorization: `Bearer ${userToken}` } }
+      );
+      isMember = orgResponse.status === 204;
+    } catch (orgError) {
+      // If direct check fails, try listing user's orgs
+      if (orgError.response?.status === 404 || orgError.response?.status === 403) {
+        try {
+          const orgsResponse = await axios.get(`${GITHUB_API_BASE}/user/orgs`, {
+            headers: { Authorization: `Bearer ${userToken}` },
+          });
+          isMember = orgsResponse.data.some(
+            (org) => org.login.toLowerCase() === ALLOWED_ORG.toLowerCase()
+          );
+        } catch (listError) {
+          console.error("Error listing orgs:", listError.message);
+        }
+      }
+    }
+
+    // Also try to access a private repo as final verification
+    if (!isMember) {
+      try {
+        const reposResponse = await axios.get(
+          `${GITHUB_API_BASE}/orgs/${ALLOWED_ORG}/repos`,
+          {
+            headers: { Authorization: `Bearer ${userToken}` },
+            params: { type: "private", per_page: 1 },
+          }
+        );
+        if (reposResponse.status === 200 && reposResponse.data.length > 0) {
+          isMember = true;
+        }
+      } catch (repoError) {
+        // If we can't access repos, user is not a member or token lacks permissions
+      }
+    }
+
+    if (!isMember) {
+      console.log(`❌ User ${user.login} is not a member of ${ALLOWED_ORG}`);
+      return res.status(403).json({
+        error: `Access denied. You must be a member of the ${ALLOWED_ORG} organization.`,
+      });
+    }
+
+    // Create session with user's token
+    const userData = {
+      id: user.id,
+      login: user.login,
+      name: user.name || user.login,
+      avatar_url: user.avatar_url,
+      accessToken: userToken, // Use their token for API calls
+      isUserToken: true,
+    };
+
+    const sessionId = createSession(userData);
+
+    console.log(`✅ User token login successful for ${user.login}`);
+
+    res.json({
+      sessionId,
+      user: {
+        id: user.id,
+        login: user.login,
+        name: user.name || user.login,
+        avatar_url: user.avatar_url,
+      },
+    });
+  } catch (error) {
+    console.error("User token login error:", error.response?.data || error.message);
+
+    if (error.response?.status === 401) {
+      return res.status(401).json({
+        error: "Invalid token. Please check your Personal Access Token is valid and not expired.",
+      });
+    }
+
+    if (error.response?.status === 403) {
+      return res.status(403).json({
+        error: "Token lacks required permissions. Please ensure it has 'repo' and 'read:org' scopes.",
+      });
+    }
+
+    res.status(500).json({
+      error: "Authentication failed. Please check your token and try again.",
+    });
+  }
+});
+
 // GitHub OAuth callback - exchange code for token
 app.post("/api/auth/github/callback", async (req, res) => {
   const { code } = req.body;
