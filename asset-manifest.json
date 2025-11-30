@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/github-release-monitor/static/css/main.0c38c705.css",
+    "main.js": "/github-release-monitor/static/js/main.57eb8cae.js",
+    "index.html": "/github-release-monitor/index.html",
+    "main.0c38c705.css.map": "/github-release-monitor/static/css/main.0c38c705.css.map",
+    "main.57eb8cae.js.map": "/github-release-monitor/static/js/main.57eb8cae.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.0c38c705.css",
+    "static/js/main.57eb8cae.js"
+  ]
+}
