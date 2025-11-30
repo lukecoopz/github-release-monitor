@@ -1,82 +1,14 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import "./Login.css";
-
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:3001";
+import { verifyToken, verifyOrgMembership, CONFIG } from "./services/github";
 
 function Login({ onLogin, error: externalError }) {
-  const [authConfig, setAuthConfig] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(externalError);
-  const [showTokenInput, setShowTokenInput] = useState(false);
   const [userToken, setUserToken] = useState("");
 
-  // Check what auth methods are available
-  useEffect(() => {
-    const checkAuthConfig = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/api/auth/check`);
-        const data = await response.json();
-        setAuthConfig(data);
-      } catch (err) {
-        console.error("Failed to check auth config:", err);
-        // Default to showing OAuth option
-        setAuthConfig({ oauthConfigured: true, tokenConfigured: false });
-      }
-    };
-    checkAuthConfig();
-  }, []);
-
-  useEffect(() => {
-    setError(externalError);
-  }, [externalError]);
-
-  const handleGitHubLogin = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/github`);
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      // Redirect to GitHub OAuth
-      window.location.href = data.url;
-    } catch (err) {
-      console.error("Failed to initiate login:", err);
-      setError(err.message || "Failed to initiate GitHub login");
-      setLoading(false);
-    }
-  };
-
-  // Quick login using server's GITHUB_TOKEN (admin only)
-  const handleServerTokenLogin = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/token-login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Token login failed");
-      }
-
-      localStorage.setItem("sessionId", data.sessionId);
-      localStorage.setItem("user", JSON.stringify(data.user));
-      onLogin(data.user, data.sessionId);
-    } catch (err) {
-      console.error("Token login failed:", err);
-      setError(err.message || "Token login failed");
-      setLoading(false);
-    }
-  };
-
-  // Login using user's own GitHub token
-  const handleUserTokenLogin = async () => {
+  // Login using user's GitHub token
+  const handleTokenLogin = async () => {
     if (!userToken.trim()) {
       setError("Please enter your GitHub Personal Access Token");
       return;
@@ -84,37 +16,59 @@ function Login({ onLogin, error: externalError }) {
 
     setLoading(true);
     setError(null);
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/user-token-login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: userToken.trim() }),
-      });
-      const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Token login failed");
+    try {
+      // Verify the token and get user info
+      const user = await verifyToken(userToken.trim());
+
+      // Verify organization membership
+      const isMember = await verifyOrgMembership(userToken.trim(), user.login);
+
+      if (!isMember) {
+        throw new Error(
+          `Access denied. You must be a member of the ${CONFIG.allowedOrg} organization.`
+        );
       }
 
-      localStorage.setItem("sessionId", data.sessionId);
-      localStorage.setItem("user", JSON.stringify(data.user));
-      setUserToken(""); // Clear token from state
-      onLogin(data.user, data.sessionId);
+      // Create session data
+      const sessionData = {
+        user: {
+          id: user.id,
+          login: user.login,
+          name: user.name || user.login,
+          avatar_url: user.avatar_url,
+        },
+        token: userToken.trim(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      };
+
+      // Store in localStorage
+      localStorage.setItem(
+        "github-dashboard-session",
+        JSON.stringify(sessionData)
+      );
+
+      // Clear token from state
+      setUserToken("");
+
+      // Notify parent
+      onLogin(sessionData.user, sessionData.token);
     } catch (err) {
-      console.error("User token login failed:", err);
-      setError(err.message || "Token login failed");
+      console.error("Login failed:", err);
+      setError(err.message || "Login failed. Please check your token.");
       setLoading(false);
     }
   };
-
-  const showOAuthButton = authConfig?.oauthConfigured;
-  const showTokenButton = authConfig?.tokenConfigured;
 
   return (
     <div className="login-container">
       <div className="login-card">
         <div className="login-header">
-          <img src="/robot.png" alt="Dashboard Logo" className="login-logo" />
+          <img
+            src={`${process.env.PUBLIC_URL}/robot.png`}
+            alt="Dashboard Logo"
+            className="login-logo"
+          />
           <h1>GitHub Release Dashboard</h1>
           <p className="login-subtitle">
             Monitor release versions and pending changes
@@ -126,10 +80,9 @@ function Login({ onLogin, error: externalError }) {
             <div className="info-icon">🔒</div>
             <p>
               This dashboard is restricted to{" "}
-              <strong>{authConfig?.allowedOrg || "DroneDeploy"}</strong>{" "}
-              employees.
+              <strong>{CONFIG.allowedOrg}</strong> employees.
               <br />
-              Sign in to continue.
+              Sign in with your GitHub Personal Access Token.
             </p>
           </div>
 
@@ -140,15 +93,28 @@ function Login({ onLogin, error: externalError }) {
             </div>
           )}
 
-          {/* OAuth Login Button */}
-          {showOAuthButton && (
+          {/* Token Input Section */}
+          <div className="token-input-section">
+            <div className="token-input-header">
+              <span>🔑 GitHub Personal Access Token</span>
+            </div>
+            <input
+              type="password"
+              className="token-input"
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              value={userToken}
+              onChange={(e) => setUserToken(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleTokenLogin()}
+              disabled={loading}
+              autoFocus
+            />
             <button
               className="github-login-btn"
-              onClick={handleGitHubLogin}
-              disabled={loading}
+              onClick={handleTokenLogin}
+              disabled={loading || !userToken.trim()}
             >
               {loading ? (
-                <span className="loading-spinner">Authenticating...</span>
+                <span className="loading-spinner">Verifying...</span>
               ) : (
                 <>
                   <svg
@@ -158,119 +124,29 @@ function Login({ onLogin, error: externalError }) {
                   >
                     <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
                   </svg>
-                  Sign in with GitHub
+                  Verify & Login
                 </>
               )}
             </button>
-          )}
-
-          {/* Divider */}
-          {showOAuthButton && (
-            <div className="login-divider">
-              <span>or</span>
-            </div>
-          )}
-
-          {/* User Token Login Section */}
-          {!showTokenInput ? (
-            <button
-              className="token-login-btn"
-              onClick={() => setShowTokenInput(true)}
-              disabled={loading}
-            >
-              <span className="token-icon">🔑</span>
-              Login with Personal Access Token
-            </button>
-          ) : (
-            <div className="token-input-section">
-              <div className="token-input-header">
-                <span>🔑 Personal Access Token</span>
-                <button
-                  className="token-cancel-btn"
-                  onClick={() => {
-                    setShowTokenInput(false);
-                    setUserToken("");
-                    setError(null);
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-              <input
-                type="password"
-                className="token-input"
-                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                value={userToken}
-                onChange={(e) => setUserToken(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleUserTokenLogin()}
-                disabled={loading}
-                autoFocus
-              />
-              <button
-                className="github-login-btn"
-                onClick={handleUserTokenLogin}
-                disabled={loading || !userToken.trim()}
+            <p className="token-help">
+              <strong>Create a token:</strong>{" "}
+              <a
+                href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=Release%20Dashboard"
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                {loading ? (
-                  <span className="loading-spinner">Verifying...</span>
-                ) : (
-                  "Verify & Login"
-                )}
-              </button>
-              <p className="token-help">
-                Create a token at{" "}
-                <a
-                  href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=Release%20Dashboard"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  github.com/settings/tokens
-                </a>
-                <br />
-                Required scopes: <code>repo</code>, <code>read:org</code>
-              </p>
-            </div>
-          )}
-
-          {/* Admin Quick Login (only shown if server token configured) */}
-          {showTokenButton && !showTokenInput && (
-            <>
-              <div className="login-divider">
-                <span>admin</span>
-              </div>
-              <button
-                className="admin-login-btn"
-                onClick={handleServerTokenLogin}
-                disabled={loading}
-              >
-                {loading ? (
-                  <span className="loading-spinner">Authenticating...</span>
-                ) : (
-                  <>
-                    <span className="token-icon">⚡</span>
-                    Quick Login (Admin)
-                  </>
-                )}
-              </button>
-            </>
-          )}
-
-          {/* Show message if neither is configured */}
-          {authConfig && !showOAuthButton && !showTokenButton && (
-            <div className="login-error">
-              <span className="error-icon">⚠️</span>
-              <span>
-                No authentication method configured. Please set up GITHUB_TOKEN
-                or GitHub OAuth in server/.env
-              </span>
-            </div>
-          )}
+                github.com/settings/tokens
+              </a>
+              <br />
+              Required scopes: <code>repo</code>, <code>read:org</code>
+            </p>
+          </div>
 
           <div className="login-footer">
             <p>
-              Your token is used to verify org membership and make API calls.
+              Your token is verified locally and used to make GitHub API calls.
               <br />
-              Tokens are stored in your session only, never on disk.
+              It's stored in your browser only and never sent to any server.
             </p>
           </div>
         </div>

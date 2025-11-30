@@ -1,29 +1,19 @@
 import React, { useState, useEffect, useCallback } from "react";
-import axios from "axios";
 import "./App.css";
 import Login from "./Login";
-import AuthCallback from "./AuthCallback";
-
-const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:3001";
-
-// Create axios instance with auth header
-const createAuthAxios = (sessionId) => {
-  const instance = axios.create({
-    baseURL: API_BASE,
-    headers: sessionId ? { Authorization: `Bearer ${sessionId}` } : {},
-  });
-  return instance;
-};
+import {
+  fetchRepositoriesBatch,
+  getRateLimit,
+  verifyToken,
+  verifyOrgMembership,
+} from "./services/github";
 
 function App() {
   // Auth state
   const [user, setUser] = useState(null);
-  const [sessionId, setSessionId] = useState(null);
+  const [token, setToken] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
-
-  // Check if we're on the auth callback route
-  const isAuthCallback = window.location.pathname === "/auth/callback";
 
   // Repository list
   const [repos] = useState([
@@ -98,68 +88,57 @@ function App() {
 
   // Check for existing session on mount
   useEffect(() => {
-    const storedSessionId = localStorage.getItem("sessionId");
-    const storedUser = localStorage.getItem("user");
+    const checkSession = async () => {
+      try {
+        const sessionData = localStorage.getItem("github-dashboard-session");
+        if (sessionData) {
+          const session = JSON.parse(sessionData);
 
-    if (storedSessionId && storedUser) {
-      // Verify session is still valid
-      axios
-        .get(`${API_BASE}/api/auth/me`, {
-          headers: { Authorization: `Bearer ${storedSessionId}` },
-        })
-        .then((response) => {
-          setUser(response.data.user);
-          setSessionId(storedSessionId);
-          setAuthLoading(false);
-        })
-        .catch(() => {
-          // Session expired, clear storage
-          localStorage.removeItem("sessionId");
-          localStorage.removeItem("user");
-          setAuthLoading(false);
-        });
-    } else {
+          // Check if session is expired
+          if (session.expiresAt && Date.now() > session.expiresAt) {
+            localStorage.removeItem("github-dashboard-session");
+            setAuthLoading(false);
+            return;
+          }
+
+          // Verify token is still valid
+          const userData = await verifyToken(session.token);
+          const isMember = await verifyOrgMembership(
+            session.token,
+            userData.login
+          );
+
+          if (isMember) {
+            setUser(session.user);
+            setToken(session.token);
+          } else {
+            localStorage.removeItem("github-dashboard-session");
+          }
+        }
+      } catch (err) {
+        console.error("Session validation failed:", err);
+        localStorage.removeItem("github-dashboard-session");
+      }
       setAuthLoading(false);
-    }
+    };
+
+    checkSession();
   }, []);
 
   // Handle auth success
-  const handleAuthSuccess = (userData, newSessionId) => {
+  const handleAuthSuccess = (userData, userToken) => {
     setUser(userData);
-    setSessionId(newSessionId);
+    setToken(userToken);
     setAuthError(null);
     setAuthLoading(false);
   };
 
-  // Handle auth error
-  const handleAuthError = (error) => {
-    setAuthError(error);
-    setAuthLoading(false);
-    // Redirect back to login after showing error
-    setTimeout(() => {
-      window.history.replaceState({}, document.title, "/");
-    }, 3000);
-  };
-
   // Logout handler
-  const handleLogout = useCallback(async () => {
-    try {
-      await axios.post(
-        `${API_BASE}/api/auth/logout`,
-        {},
-        {
-          headers: { Authorization: `Bearer ${sessionId}` },
-        }
-      );
-    } catch (err) {
-      console.error("Logout error:", err);
-    }
-
-    localStorage.removeItem("sessionId");
-    localStorage.removeItem("user");
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("github-dashboard-session");
     setUser(null);
-    setSessionId(null);
-  }, [sessionId]);
+    setToken(null);
+  }, []);
 
   // Cache key based on repos list
   const cacheKey = `github-dashboard-${repos
@@ -205,25 +184,22 @@ function App() {
 
   // Fetch API usage stats
   const fetchApiUsage = useCallback(async () => {
+    if (!token) return;
+
     try {
-      const response = await axios.get(`${API_BASE}/api/usage`);
-      setApiUsage(response.data);
+      const usage = await getRateLimit(token);
+      if (usage) {
+        setApiUsage(usage);
+      }
     } catch (err) {
       console.error("Failed to fetch API usage:", err);
-      setApiUsage({
-        used: 0,
-        limit: 5000,
-        remaining: 5000,
-        percentage: 0,
-        resetInMinutes: 60,
-        resetAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      });
     }
-  }, []);
+  }, [token]);
 
+  // Fetch repos
   const fetchRepos = useCallback(
     async (refresh = false) => {
-      if (!sessionId) return;
+      if (!token) return;
 
       if (!refresh) {
         const cached = loadCachedData();
@@ -238,71 +214,40 @@ function App() {
       setError(null);
 
       try {
-        const authAxios = createAuthAxios(sessionId);
-        const response = await authAxios.post("/api/repos/batch", {
-          repos,
-          refresh,
-        });
+        console.log("🚀 Fetching repository data from GitHub...");
+        const results = await fetchRepositoriesBatch(token, repos);
 
-        setRepoData(response.data);
-        saveCachedData(response.data);
+        setRepoData(results);
+        saveCachedData(results);
 
-        if (refresh) {
-          setTimeout(() => {
-            fetchApiUsage();
-          }, 200);
-        }
+        // Refresh API usage
+        fetchApiUsage();
       } catch (err) {
+        console.error("Failed to fetch repos:", err);
+
         // Check if it's an auth error
-        if (err.response?.status === 401) {
+        if (
+          err.message?.includes("401") ||
+          err.message?.includes("Invalid token")
+        ) {
           handleLogout();
           return;
         }
 
         setError("Failed to fetch repository data");
-        console.error(err);
 
+        // Try to use cached data
         const cached = loadCachedData();
         if (cached) {
           console.log("⚠️ API failed, using cached data");
           setRepoData(cached);
           setError(null);
-        } else {
-          try {
-            const authAxios = createAuthAxios(sessionId);
-            const fallbackResults = await Promise.all(
-              repos.map(({ owner, repo }) =>
-                authAxios
-                  .get(`/api/repo/${owner}/${repo}`, {
-                    params: refresh ? { refresh: "true" } : {},
-                  })
-                  .then((response) => response.data)
-                  .catch((err) => ({
-                    owner,
-                    repo,
-                    error: err.response?.data?.message || err.message,
-                    statusCode: err.response?.status,
-                  }))
-              )
-            );
-            setRepoData(fallbackResults);
-            saveCachedData(fallbackResults);
-          } catch (fallbackErr) {
-            console.error("Fallback also failed:", fallbackErr);
-          }
         }
       } finally {
         setLoading(false);
       }
     },
-    [
-      repos,
-      loadCachedData,
-      saveCachedData,
-      fetchApiUsage,
-      sessionId,
-      handleLogout,
-    ]
+    [token, repos, loadCachedData, saveCachedData, fetchApiUsage, handleLogout]
   );
 
   // Apply theme on mount and when it changes
@@ -313,7 +258,7 @@ function App() {
 
   // Fetch repos when authenticated
   useEffect(() => {
-    if (!sessionId || isAuthCallback) return;
+    if (!token) return;
 
     const cached = loadCachedData();
     if (cached) {
@@ -326,7 +271,7 @@ function App() {
     fetchApiUsage();
     const interval = setInterval(fetchApiUsage, 30000);
     return () => clearInterval(interval);
-  }, [sessionId, loadCachedData, fetchRepos, fetchApiUsage, isAuthCallback]);
+  }, [token, loadCachedData, fetchRepos, fetchApiUsage]);
 
   const toggleTheme = () => {
     setTheme((prevTheme) => (prevTheme === "dark" ? "light" : "dark"));
@@ -369,7 +314,7 @@ function App() {
     return `${Math.floor(diffDays / 365)} years ago`;
   };
 
-  // Filter repos based on filterNewChanges and searchQuery
+  // Filter repos
   const filteredRepoData = repoData.filter((data) => {
     if (filterNewChanges && !data.hasChanges) {
       return false;
@@ -407,7 +352,7 @@ function App() {
     return true;
   });
 
-  // Helper function to get sort value for a field
+  // Sort helper
   const getSortValue = (data, field) => {
     switch (field) {
       case "commit-date":
@@ -428,7 +373,7 @@ function App() {
     }
   };
 
-  // Sort filtered repos using multiple criteria
+  // Sort repos
   const sortedRepoData = [...filteredRepoData].sort((a, b) => {
     for (const criterion of sortCriteria) {
       const { field, order } = criterion;
@@ -453,7 +398,7 @@ function App() {
     return 0;
   });
 
-  // Show loading state while checking auth
+  // Loading state
   if (authLoading) {
     return (
       <div className="auth-loading">
@@ -488,17 +433,7 @@ function App() {
     );
   }
 
-  // Show auth callback handler
-  if (isAuthCallback) {
-    return (
-      <AuthCallback
-        onAuthSuccess={handleAuthSuccess}
-        onAuthError={handleAuthError}
-      />
-    );
-  }
-
-  // Show login page if not authenticated
+  // Login page
   if (!user) {
     return <Login onLogin={handleAuthSuccess} error={authError} />;
   }
@@ -536,7 +471,7 @@ function App() {
           <div className="header-text">
             <h1>
               <img
-                src="/robot.png"
+                src={`${process.env.PUBLIC_URL}/robot.png`}
                 alt="Verified Robot"
                 style={{
                   width: "64px",
@@ -630,12 +565,7 @@ function App() {
                       if (currentOrder === "asc") {
                         setSortCriteria(
                           sortCriteria.map((c, idx) =>
-                            idx === sortIndex
-                              ? {
-                                  ...c,
-                                  order: "desc",
-                                }
-                              : c
+                            idx === sortIndex ? { ...c, order: "desc" } : c
                           )
                         );
                       } else {
@@ -726,7 +656,6 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
   } = data;
 
   if (error) {
-    const is403 = data.statusCode === 403;
     const isRateLimit =
       error.includes("rate limit") || error.includes("Rate limit");
     return (
@@ -741,29 +670,8 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
             {isRateLimit && (
               <div className="error-help">
                 <p>
-                  ⚠️ GitHub API rate limit exceeded. Cached data will be
-                  displayed until you manually refresh.
-                </p>
-                <p>
-                  Please wait a few minutes before clicking the Refresh button.
-                </p>
-              </div>
-            )}
-            {is403 && !isRateLimit && (
-              <div className="error-help">
-                <p>This repository is private and requires authentication.</p>
-                <p>
-                  Please set up a GitHub token in <code>server/.env</code>:
-                </p>
-                <code>GITHUB_TOKEN=your_token_here</code>
-                <p>
-                  <a
-                    href="https://github.com/settings/tokens"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Get a token here →
-                  </a>
+                  ⚠️ GitHub API rate limit exceeded. Please wait before
+                  refreshing.
                 </p>
               </div>
             )}
