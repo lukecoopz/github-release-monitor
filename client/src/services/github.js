@@ -82,19 +82,33 @@ export async function verifyOrgMembership(token, username) {
   }
 
   // Final fallback: Try to access org's private repos
+  // This verifies both org membership AND that the token has 'repo' scope
   try {
     const response = await fetch(
       `${GITHUB_API_BASE}/orgs/${CONFIG.allowedOrg}/repos?type=private&per_page=1`,
       { headers: getHeaders(token) }
     );
+    
+    // If we get 403, the token lacks 'repo' scope or user isn't a member
+    if (response.status === 403) {
+      return false;
+    }
+    
+    // If we get 401, the token is invalid
+    if (response.status === 401) {
+      throw new Error("Invalid token. Please check your Personal Access Token.");
+    }
+    
     if (response.ok) {
-      const repos = await response.json();
-      if (repos.length > 0) {
-        return true;
-      }
+      // Even if repos array is empty, a 200 response means we have access
+      return true;
     }
   } catch (e) {
-    // User doesn't have access
+    // If it's an auth error, re-throw it
+    if (e.message?.includes("Invalid token")) {
+      throw e;
+    }
+    // Otherwise, user doesn't have access
   }
 
   return false;
@@ -186,10 +200,33 @@ export async function fetchRepositoriesBatch(token, repos) {
         body: JSON.stringify({ query: graphqlQuery }),
       });
 
+      // Check HTTP response status first
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("Invalid token. Please check your Personal Access Token.");
+        }
+        if (response.status === 403) {
+          throw new Error("Token lacks required permissions. Please ensure it has 'repo' and 'read:org' scopes.");
+        }
+        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+      }
+
       const data = await response.json();
 
       if (data.errors) {
         console.error("GraphQL errors:", data.errors);
+        // Check if it's an authentication/authorization error
+        const authError = data.errors.find(err => 
+          err.message?.includes("401") || 
+          err.message?.includes("403") ||
+          err.message?.toLowerCase().includes("bad credentials") ||
+          err.message?.toLowerCase().includes("authentication")
+        );
+        
+        if (authError) {
+          throw new Error("Authentication failed. Please check your token is valid and has the required scopes.");
+        }
+        
         batch.forEach((repo) => {
           allResults.push({
             owner: repo.owner,
@@ -292,11 +329,19 @@ export async function fetchRepositoriesBatch(token, repos) {
       }
     } catch (error) {
       console.error("Batch fetch error:", error);
+      
+      // If it's an authentication error, throw it so the app can handle it
+      if (error.message?.includes("Invalid token") || 
+          error.message?.includes("Authentication failed") ||
+          error.message?.includes("lacks required permissions")) {
+        throw error;
+      }
+      
       batch.forEach((repo) => {
         allResults.push({
           owner: repo.owner,
           repo: repo.repo,
-          error: "Failed to fetch repository data",
+          error: error.message || "Failed to fetch repository data",
         });
       });
     }

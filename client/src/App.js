@@ -62,6 +62,7 @@ function App() {
     { owner: "dronedeploy", repo: "spotty" },
     { owner: "dronedeploy", repo: "spud" },
     { owner: "dronedeploy", repo: "stitch" },
+    { owner: "dronedeploy", repo: "stormie" },
     { owner: "dronedeploy", repo: "strimovic" },
     { owner: "dronedeploy", repo: "taggie" },
     { owner: "dronedeploy", repo: "teletubby" },
