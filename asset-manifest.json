@@ -1,13 +1,13 @@
 {
   "files": {
     "main.css": "/github-release-monitor/static/css/main.0c38c705.css",
-    "main.js": "/github-release-monitor/static/js/main.57eb8cae.js",
+    "main.js": "/github-release-monitor/static/js/main.87c9bec2.js",
     "index.html": "/github-release-monitor/index.html",
     "main.0c38c705.css.map": "/github-release-monitor/static/css/main.0c38c705.css.map",
-    "main.57eb8cae.js.map": "/github-release-monitor/static/js/main.57eb8cae.js.map"
+    "main.87c9bec2.js.map": "/github-release-monitor/static/js/main.87c9bec2.js.map"
   },
   "entrypoints": [
     "static/css/main.0c38c705.css",
-    "static/js/main.57eb8cae.js"
+    "static/js/main.87c9bec2.js"
   ]
 }
