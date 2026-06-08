@@ -661,9 +661,7 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
       error.includes("rate limit") || error.includes("Rate limit");
     return (
       <div className="repo-card error-card">
-        <h2>
-          {owner}/{repo}
-        </h2>
+        <h2>{repo}</h2>
         <div className="error-message">
           <div className="error-icon">❌</div>
           <div className="error-text">
@@ -685,29 +683,28 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
   if (!release) {
     return (
       <div className="repo-card">
-        <h2>
-          {owner}/{repo}
-        </h2>
+        <h2>{repo}</h2>
         <div className="no-release">No releases found</div>
       </div>
     );
   }
 
   return (
-    <div className={`repo-card ${hasChanges ? "has-changes" : ""}`}>
-      <div className="repo-header">
-        {hasChanges && (
-          <div className="badge-container">
-            <span className="badge new-changes">New Changes</span>
-          </div>
-        )}
-        <h2>
+    <div className="repo-card-wrap">
+      {hasChanges && (
+        <div className="badge-container">
+          <span className="badge new-changes">New Changes</span>
+        </div>
+      )}
+      <div className={`repo-card ${hasChanges ? "has-changes" : ""}`}>
+        <div className="repo-header">
+          <h2>
           <a
             href={`https://github.com/${owner}/${repo}`}
             target="_blank"
             rel="noopener noreferrer"
           >
-            {owner}/{repo}
+            {repo}
           </a>
         </h2>
       </div>
@@ -786,9 +783,10 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
         </div>
       )}
 
-      {!hasChanges && (
-        <div className="no-changes">✅ No changes since last release</div>
-      )}
+        {!hasChanges && (
+          <div className="no-changes">✅ No changes since last release</div>
+        )}
+      </div>
     </div>
   );
 }

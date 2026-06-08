@@ -418,9 +418,20 @@ body {
 }
 
 .repo-card.has-changes {
-  border-left: 4px solid var(--new-changes-border);
-  background: linear-gradient(to right, var(--new-changes-bg) 0%, var(--card-bg) 10%);
-  background-clip: padding-box;
+  box-shadow: inset 4px 0 0 0 var(--new-changes-border), 0 2px 8px var(--shadow-color);
+}
+
+.repo-card.has-changes:hover {
+  box-shadow: inset 4px 0 0 0 var(--new-changes-border), 0 4px 12px var(--shadow-color);
+}
+
+.repo-card-wrap {
+  position: relative;
+  display: flex;
+}
+
+.repo-card-wrap > .repo-card {
+  flex: 1;
 }
 
 .repo-header {
@@ -430,9 +441,10 @@ body {
 }
 
 .badge-container {
-  margin-bottom: 8px;
-  display: flex;
-  justify-content: flex-start;
+  position: absolute;
+  top: -11px;
+  right: 16px;
+  z-index: 3;
 }
 
 .repo-header h2 {
@@ -440,16 +452,13 @@ body {
   color: var(--text-primary);
   margin: 0;
   line-height: 1.2;
-  word-wrap: break-word;
   overflow-wrap: break-word;
-  word-break: break-word;
 }
 
 .repo-header h2 a {
   color: var(--accent-color);
   text-decoration: none;
   transition: color 0.2s;
-  word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
@@ -485,8 +494,17 @@ body {
 .badge.new-changes {
   background: var(--new-changes-border);
   color: var(--bg-primary);
-  animation: pulse 2s infinite;
+  animation: badge-pulse 2s infinite;
   font-weight: 700;
+}
+
+@keyframes badge-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.92;
+  }
 }
 
 .theme-light .badge.new-changes {
@@ -508,16 +526,18 @@ body {
 
 .release-version {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   margin-bottom: 10px;
   font-size: 1.1rem;
 }
 
 .release-date {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   color: var(--text-secondary);
   font-size: 0.95rem;
 }
@@ -525,6 +545,12 @@ body {
 .label {
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.date,
+.time-ago {
+  white-space: nowrap;
 }
 
 .version-tag {
@@ -534,6 +560,7 @@ body {
   border-radius: 6px;
   text-decoration: none;
   font-weight: 600;
+  font-size: 0.95rem;
   font-family: 'Courier New', monospace;
   transition: background 0.2s;
 }
@@ -631,9 +658,9 @@ body {
   padding: 8px 0;
   border-bottom: 1px solid var(--border-color);
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -650,9 +677,7 @@ body {
   min-width: 0;
   font-size: 0.9rem;
   transition: color 0.2s;
-  word-wrap: break-word;
   overflow-wrap: break-word;
-  word-break: break-word;
   line-height: 1.4;
 }
 
@@ -682,7 +707,6 @@ body {
   font-size: 0.8rem;
   white-space: nowrap;
   flex-shrink: 0;
-  margin-left: 10px;
 }
 
 .no-changes {
@@ -1096,12 +1120,6 @@ body {
   .changes-summary {
     flex-direction: column;
     gap: 10px;
-  }
-  
-  .prs-list li,
-  .commits-list li {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }
 
