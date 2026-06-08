@@ -690,14 +690,15 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
   }
 
   return (
-    <div className={`repo-card ${hasChanges ? "has-changes" : ""}`}>
-      <div className="repo-header">
-        {hasChanges && (
-          <div className="badge-container">
-            <span className="badge new-changes">New Changes</span>
-          </div>
-        )}
-        <h2>
+    <div className="repo-card-wrap">
+      {hasChanges && (
+        <div className="badge-container">
+          <span className="badge new-changes">New Changes</span>
+        </div>
+      )}
+      <div className={`repo-card ${hasChanges ? "has-changes" : ""}`}>
+        <div className="repo-header">
+          <h2>
           <a
             href={`https://github.com/${owner}/${repo}`}
             target="_blank"
@@ -782,9 +783,10 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
         </div>
       )}
 
-      {!hasChanges && (
-        <div className="no-changes">✅ No changes since last release</div>
-      )}
+        {!hasChanges && (
+          <div className="no-changes">✅ No changes since last release</div>
+        )}
+      </div>
     </div>
   );
 }
