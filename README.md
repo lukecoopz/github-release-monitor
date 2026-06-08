@@ -141,7 +141,6 @@ microservice-playground/
 │   │   └── services/
 │   │       └── github.js     # GitHub API service (client-side)
 │   └── package.json
-├── server/                    # Legacy server (not needed for GitHub Pages)
 └── README.md
 ```
 
