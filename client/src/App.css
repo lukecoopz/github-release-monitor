@@ -440,16 +440,13 @@ body {
   color: var(--text-primary);
   margin: 0;
   line-height: 1.2;
-  word-wrap: break-word;
   overflow-wrap: break-word;
-  word-break: break-word;
 }
 
 .repo-header h2 a {
   color: var(--accent-color);
   text-decoration: none;
   transition: color 0.2s;
-  word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
@@ -631,9 +628,9 @@ body {
   padding: 8px 0;
   border-bottom: 1px solid var(--border-color);
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -650,9 +647,7 @@ body {
   min-width: 0;
   font-size: 0.9rem;
   transition: color 0.2s;
-  word-wrap: break-word;
   overflow-wrap: break-word;
-  word-break: break-word;
   line-height: 1.4;
 }
 
@@ -682,7 +677,6 @@ body {
   font-size: 0.8rem;
   white-space: nowrap;
   flex-shrink: 0;
-  margin-left: 10px;
 }
 
 .no-changes {
@@ -1096,12 +1090,6 @@ body {
   .changes-summary {
     flex-direction: column;
     gap: 10px;
-  }
-  
-  .prs-list li,
-  .commits-list li {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }
 

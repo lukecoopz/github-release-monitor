@@ -661,9 +661,7 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
       error.includes("rate limit") || error.includes("Rate limit");
     return (
       <div className="repo-card error-card">
-        <h2>
-          {owner}/{repo}
-        </h2>
+        <h2>{repo}</h2>
         <div className="error-message">
           <div className="error-icon">❌</div>
           <div className="error-text">
@@ -685,9 +683,7 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
   if (!release) {
     return (
       <div className="repo-card">
-        <h2>
-          {owner}/{repo}
-        </h2>
+        <h2>{repo}</h2>
         <div className="no-release">No releases found</div>
       </div>
     );
@@ -707,7 +703,7 @@ function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
             target="_blank"
             rel="noopener noreferrer"
           >
-            {owner}/{repo}
+            {repo}
           </a>
         </h2>
       </div>
