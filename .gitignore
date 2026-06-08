@@ -22,3 +22,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+
+*storybook.log
+storybook-static

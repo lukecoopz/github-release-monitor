@@ -14,11 +14,14 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build"
+    "deploy": "gh-pages -d build",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "eslintConfig": {
     "extends": [
-      "react-app"
+      "react-app",
+      "plugin:storybook/recommended"
     ]
   },
   "browserslist": {
@@ -34,6 +37,14 @@
     ]
   },
   "devDependencies": {
-    "gh-pages": "^6.1.1"
+    "@storybook/addon-a11y": "^10.4.2",
+    "@storybook/addon-docs": "^10.4.2",
+    "@storybook/preset-create-react-app": "^10.4.2",
+    "@storybook/react-webpack5": "^10.4.2",
+    "eslint-plugin-storybook": "^10.4.2",
+    "gh-pages": "^6.1.1",
+    "prop-types": "^15.8.1",
+    "storybook": "^10.4.2",
+    "webpack": "^5.107.2"
   }
 }
