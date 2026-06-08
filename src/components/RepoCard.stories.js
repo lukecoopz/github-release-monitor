@@ -1,38 +1,5 @@
 import RepoCard from "./RepoCard";
 
-const formatDate = (dateString) =>
-  dateString
-    ? new Date(dateString).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      })
-    : "N/A";
-
-const formatDateTime = (dateString) =>
-  dateString
-    ? new Date(dateString).toLocaleString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "N/A";
-
-const getTimeSince = (dateString) => {
-  if (!dateString) return "";
-  const diffDays = Math.floor(
-    (Date.now() - new Date(dateString).getTime()) / (1000 * 60 * 60 * 24)
-  );
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "1 day ago";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
-  return `${Math.floor(diffDays / 365)} years ago`;
-};
-
 const release = {
   tag: "v2.4.0",
   url: "https://github.com/dronedeploy/stormie/releases/tag/v2.4.0",
@@ -98,7 +65,6 @@ const rateLimitData = {
 const meta = {
   title: "Components/RepoCard",
   component: RepoCard,
-  args: { formatDate, formatDateTime, getTimeSince },
   parameters: { layout: "fullscreen" },
   globals: { viewport: { value: "mobile2" } },
 };
@@ -123,7 +89,7 @@ export const RateLimitError = {
 
 export const Grid = {
   globals: { viewport: { value: undefined } },
-  render: ({ data, ...formatters }) => (
+  render: () => (
     <div className="dashboard">
       {[
         withChangesData,
@@ -135,11 +101,7 @@ export const Grid = {
         { ...withChangesData, repo: "giraffe", commitsCount: 4, prsCount: 2 },
         { ...noChangesData, repo: "dora" },
       ].map((repoData) => (
-        <RepoCard
-          key={repoData.repo}
-          data={repoData}
-          {...formatters}
-        />
+        <RepoCard key={repoData.repo} data={repoData} />
       ))}
     </div>
   ),

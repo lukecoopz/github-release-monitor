@@ -1,6 +1,7 @@
 import React from "react";
+import { formatDate, formatDateTime, getTimeSince } from "../utils/dates";
 
-function RepoCard({ data, formatDate, formatDateTime, getTimeSince }) {
+function RepoCard({ data }) {
   const {
     owner,
     repo,
