@@ -50,7 +50,6 @@ The app is deployed to GitHub Pages and requires no server setup.
 ### Install & Run
 
 ```bash
-cd client
 npm install
 npm start
 ```
@@ -61,7 +60,7 @@ The app will open at `http://localhost:3000`
 
 ### Changing the Allowed Organization
 
-Edit `client/src/services/github.js`:
+Edit `src/services/github.js`:
 
 ```javascript
 const CONFIG = {
@@ -71,7 +70,7 @@ const CONFIG = {
 
 ### Adding/Removing Repositories
 
-Edit `client/src/App.js` and update the `repos` array:
+Edit `src/App.js` and update the `repos` array:
 
 ```javascript
 const [repos] = useState([
@@ -86,7 +85,6 @@ const [repos] = useState([
 ### Deploy to GitHub Pages
 
 ```bash
-cd client
 npm run deploy
 ```
 
@@ -101,8 +99,8 @@ This builds the app and pushes to the `gh-pages` branch.
 
 ### Custom Domain (Optional)
 
-1. Add a `CNAME` file to `client/public/` with your domain
-2. Update `homepage` in `client/package.json`
+1. Add a `CNAME` file to `public/` with your domain
+2. Update `homepage` in `package.json`
 3. Configure DNS with your domain provider
 
 ## How It Works
@@ -127,21 +125,19 @@ This builds the app and pushes to the `gh-pages` branch.
 ## Project Structure
 
 ```
-microservice-playground/
-├── client/
-│   ├── public/
-│   │   ├── index.html        # HTML template with SPA redirect
-│   │   ├── 404.html          # GitHub Pages SPA fallback
-│   │   └── robot.png         # App icon
-│   ├── src/
-│   │   ├── App.js            # Main dashboard component
-│   │   ├── App.css           # Dashboard styles
-│   │   ├── Login.js          # Login page component
-│   │   ├── Login.css         # Login page styles
-│   │   └── services/
-│   │       └── github.js     # GitHub API service (client-side)
-│   └── package.json
-└── README.md
+github-release-monitor/
+├── public/
+│   ├── index.html        # HTML template with SPA redirect
+│   ├── 404.html          # GitHub Pages SPA fallback
+│   └── robot.png         # App icon
+├── src/
+│   ├── App.js            # Main dashboard component
+│   ├── App.css           # Dashboard styles
+│   ├── Login.js          # Login page component
+│   ├── Login.css         # Login page styles
+│   └── services/
+│       └── github.js     # GitHub API service (client-side)
+└── package.json
 ```
 
 ## Troubleshooting

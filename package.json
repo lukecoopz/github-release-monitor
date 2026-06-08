@@ -1,22 +1,39 @@
 {
   "name": "github-release-dashboard",
-  "version": "1.0.0",
-  "description": "Dashboard to monitor GitHub repository releases and pending changes",
-  "main": "server/index.js",
-  "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "cd server && node index.js",
-    "client": "cd client && npm start",
-    "install-all": "npm install && cd server && npm install && cd ../client && npm install"
+  "version": "0.1.0",
+  "private": true,
+  "homepage": "https://lukecoopz.github.io/github-release-monitor",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1"
   },
-  "keywords": [
-    "github",
-    "dashboard",
-    "releases"
-  ],
-  "author": "",
-  "license": "MIT",
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d build"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "gh-pages": "^6.1.1"
   }
 }
