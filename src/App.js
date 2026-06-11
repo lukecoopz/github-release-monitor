@@ -78,11 +78,10 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [apiUsage, setApiUsage] = useState(null);
-  const [filterNewChanges, setFilterNewChanges] = useState(false);
+  const [filterNewChanges, setFilterNewChanges] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortCriteria, setSortCriteria] = useState([
-    { field: "alphabetical", order: "asc" },
-  ]);
+  const [sortBy, setSortBy] = useState("merge-date");
+  const [sortOrder, setSortOrder] = useState("desc");
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem("github-dashboard-theme");
     return savedTheme || "dark";
@@ -340,27 +339,15 @@ function App() {
 
   // Sort repos
   const sortedRepoData = [...filteredRepoData].sort((a, b) => {
-    for (const criterion of sortCriteria) {
-      const { field, order } = criterion;
-      const aValue = getSortValue(a, field);
-      const bValue = getSortValue(b, field);
+    const aValue = getSortValue(a, sortBy);
+    const bValue = getSortValue(b, sortBy);
 
-      let comparison = 0;
-      if (field === "alphabetical") {
-        comparison = aValue.localeCompare(bValue);
-      } else {
-        comparison = aValue - bValue;
-      }
+    const comparison =
+      sortBy === "alphabetical"
+        ? aValue.localeCompare(bValue)
+        : aValue - bValue;
 
-      if (order === "desc") {
-        comparison = -comparison;
-      }
-
-      if (comparison !== 0) {
-        return comparison;
-      }
-    }
-    return 0;
+    return sortOrder === "desc" ? -comparison : comparison;
   });
 
   // Loading state
@@ -504,75 +491,31 @@ function App() {
       {!loading && !error && filteredRepoData.length > 0 && (
         <div className="sort-controls">
           <span className="sort-label">Sort by:</span>
-          {["alphabetical", "commit-date", "merge-date", "release-date"].map(
-            (field) => {
-              const fieldLabel = {
-                alphabetical: "Alphabetical",
-                "commit-date": "Commit Date",
-                "merge-date": "Merge Date",
-                "release-date": "Release Date",
-              }[field];
-
-              const sortIndex = sortCriteria.findIndex(
-                (c) => c.field === field
-              );
-              const isActive = sortIndex !== -1;
-              const currentOrder = isActive
-                ? sortCriteria[sortIndex].order
-                : "asc";
-
-              return (
-                <button
-                  key={field}
-                  className={`sort-btn ${isActive ? "active" : ""}`}
-                  onClick={() => {
-                    if (isActive) {
-                      if (currentOrder === "asc") {
-                        setSortCriteria(
-                          sortCriteria.map((c, idx) =>
-                            idx === sortIndex ? { ...c, order: "desc" } : c
-                          )
-                        );
-                      } else {
-                        const newCriteria = sortCriteria.filter(
-                          (c, idx) => idx !== sortIndex
-                        );
-                        setSortCriteria(newCriteria);
-                      }
-                    } else {
-                      setSortCriteria([
-                        ...sortCriteria,
-                        { field, order: "asc" },
-                      ]);
-                    }
-                  }}
-                >
-                  {fieldLabel}
-                  {isActive && (
-                    <>
-                      <span className="sort-chevron">
-                        {currentOrder === "asc" ? "↑" : "↓"}
-                      </span>
-                      {sortCriteria.length > 1 && (
-                        <span className="sort-priority">{sortIndex + 1}</span>
-                      )}
-                    </>
-                  )}
-                </button>
-              );
+          <select
+            className="sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            title="Sort repositories"
+          >
+            <option value="alphabetical">Alphabetical</option>
+            <option value="commit-date">Commit Date</option>
+            <option value="merge-date">Merge Date</option>
+            <option value="release-date">Release Date</option>
+          </select>
+          <button
+            className="sort-btn"
+            onClick={() =>
+              setSortOrder(sortOrder === "asc" ? "desc" : "asc")
             }
-          )}
-          {sortCriteria.length > 1 && (
-            <button
-              className="sort-btn sort-clear"
-              onClick={() =>
-                setSortCriteria([{ field: "alphabetical", order: "asc" }])
-              }
-              title="Clear all sorts"
-            >
-              Clear
-            </button>
-          )}
+            title={`Switch to ${
+              sortOrder === "asc" ? "descending" : "ascending"
+            } order`}
+          >
+            <span className="sort-chevron">
+              {sortOrder === "asc" ? "↑" : "↓"}
+            </span>
+            {sortOrder === "asc" ? "Ascending" : "Descending"}
+          </button>
         </div>
       )}
 
