@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "./App.css";
 import Login from "./Login";
+import CopyMarkdownButton from "./components/CopyMarkdownButton";
 import RepoCard from "./components/RepoCard";
 import {
   fetchRepositoriesBatch,
@@ -516,6 +517,7 @@ function App() {
             </span>
             {sortOrder === "asc" ? "Ascending" : "Descending"}
           </button>
+          <CopyMarkdownButton repositories={sortedRepoData} />
         </div>
       )}
 
