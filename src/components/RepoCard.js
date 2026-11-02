@@ -1,4 +1,5 @@
 import React from "react";
+import ReleaseCommandButton from "./ReleaseCommandButton";
 import { formatDate, formatDateTime, getTimeSince } from "../utils/dates";
 
 function RepoCard({ data }) {
@@ -65,6 +66,11 @@ function RepoCard({ data }) {
               {repo}
             </a>
           </h2>
+          <ReleaseCommandButton
+            owner={owner}
+            repository={repo}
+            currentTag={release.tag}
+          />
         </div>
 
         <div className="release-info">
