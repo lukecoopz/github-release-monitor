@@ -292,12 +292,12 @@ body {
   margin-left: auto;
 }
 
-.copy-markdown-btn.copied {
+.clipboard-btn.copied {
   border-color: var(--success-color);
   color: var(--success-color);
 }
 
-.copy-markdown-btn.failed {
+.clipboard-btn.failed {
   border-color: var(--error-color);
   color: var(--error-color);
 }
@@ -425,6 +425,10 @@ body {
   margin-bottom: 20px;
   padding-bottom: 15px;
   border-bottom: 2px solid var(--border-color);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .badge-container {
@@ -440,6 +444,78 @@ body {
   margin: 0;
   line-height: 1.2;
   overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.release-command-control {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.release-command-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.release-command-btn:hover {
+  border-color: var(--accent-color);
+  transform: translateY(-1px);
+}
+
+.release-command-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+}
+
+.release-bump-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 4;
+  min-width: 160px;
+  padding: 6px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px var(--shadow-color);
+}
+
+.release-bump-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.release-bump-option:hover,
+.release-bump-option:focus {
+  background: var(--hover-bg);
+  outline: none;
+}
+
+.release-bump-option code {
+  color: var(--accent-color);
+  font-size: 0.75rem;
 }
 
 .repo-header h2 a {
